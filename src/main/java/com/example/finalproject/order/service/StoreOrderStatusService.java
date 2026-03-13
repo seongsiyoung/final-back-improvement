@@ -24,6 +24,7 @@ public class StoreOrderStatusService {
     private final StoreOrderRepository storeOrderRepository;
     private final ApplicationEventPublisher eventPublisher;
 
+    @Transactional
     public void handleRefundCompletion(Long storeOrderId, String reason) {
 
         StoreOrder storeOrder = storeOrderRepository.findById(storeOrderId)
