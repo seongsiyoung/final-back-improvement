@@ -3,3 +3,5 @@ spring:
     active: prod
   application:
     name: Final-Project
+  jpa:
+    open-in-view: false
