@@ -20,6 +20,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -94,8 +95,38 @@ public class SecurityConfig {
         return source;
     }
 
+    // 카카오 OAuth 인가 요청(state)을 세션에 저장해야 해서 이 경로만 세션을 허용한다.
+    // JWT로 인증하는 나머지 API 체인(apiFilterChain)까지 IF_REQUIRED를 같이 쓰면,
+    // JwtAuthenticationFilter가 매 요청마다 SecurityContextHolder를 갱신할 때
+    // HttpSessionSecurityContextRepository가 요청마다 새 세션을 만들어버린다.
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    @Order(1)
+    public SecurityFilterChain oauth2FilterChain(HttpSecurity http) throws Exception {
+        http
+                .securityMatcher("/oauth2/**", "/login/oauth2/**")
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(
+                        session -> session.sessionCreationPolicy(
+                                SessionCreationPolicy.IF_REQUIRED))
+                .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+                .oauth2Login(oauth2 -> oauth2
+                        .authorizationEndpoint(auth -> auth
+                                .authorizationRequestResolver(
+                                        kakaoAuthorizationRequestResolver()))
+                        .successHandler(new OAuth2LoginSuccessHandler(
+                                socialLoginStrategyRegistry,
+                                authService,
+                                jwtProperties,
+                                jwtTokenProvider)))
+                .addFilterBefore(new OAuth2AuthorizationRequestLoggingFilter(),
+                        OAuth2AuthorizationRequestRedirectFilter.class);
+        return http.build();
+    }
+
+    @Bean
+    @Order(2)
+    public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(AbstractHttpConfigurer::disable)
@@ -103,7 +134,7 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .sessionManagement(
                         session -> session.sessionCreationPolicy(
-                                SessionCreationPolicy.IF_REQUIRED)) // OAuth는 세션 사용
+                                SessionCreationPolicy.STATELESS)) // JWT라 세션 불필요. OAuth는 oauth2FilterChain에서 별도 처리
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> {
                             response.addHeader(org.springframework.http.HttpHeaders.SET_COOKIE,
@@ -139,8 +170,6 @@ public class SecurityConfig {
                                 "/api/auth/verify-phone")
                         .permitAll()
                         .requestMatchers(
-                                "/oauth2/authorization/**",
-                                "/login/oauth2/code/**",
                                 "/error",
                                 "/api/notices",
                                 "/api/banners")
@@ -186,17 +215,6 @@ public class SecurityConfig {
                                 "/api/store/subscription-products/**")
                         .hasRole("STORE")
                         .anyRequest().authenticated())
-                .oauth2Login(oauth2 -> oauth2
-                        .authorizationEndpoint(auth -> auth
-                                .authorizationRequestResolver(
-                                        kakaoAuthorizationRequestResolver()))
-                        .successHandler(new OAuth2LoginSuccessHandler(
-                                socialLoginStrategyRegistry,
-                                authService,
-                                jwtProperties,
-                                jwtTokenProvider)))
-                .addFilterBefore(new OAuth2AuthorizationRequestLoggingFilter(),
-                        OAuth2AuthorizationRequestRedirectFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
