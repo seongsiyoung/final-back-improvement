@@ -14,6 +14,7 @@ import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.service.pg.PaymentGateWay;
 import com.example.finalproject.testsupport.PassThroughCircuitBreakerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -63,10 +64,10 @@ class SubscriptionBillingServiceTest {
         SubscriptionPayment pending = pendingPayment(1L, 15000);
         TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
         when(subscriptionChargeCommandService.startCharge(10L))
-                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key", LocalDate.of(2026, 8, 21)));
 
         TossBillingApproveResponse response = approveResponse("pk-1");
-        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any())).thenReturn(response);
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any(), any())).thenReturn(response);
 
         SubscriptionPayment completed = pendingPayment(1L, 15000);
         when(subscriptionChargeCommandService.completeCharge(1L, response)).thenReturn(completed);
@@ -82,16 +83,16 @@ class SubscriptionBillingServiceTest {
         SubscriptionPayment pending = pendingPayment(1L, 15000);
         TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
         when(subscriptionChargeCommandService.startCharge(10L))
-                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key", LocalDate.of(2026, 8, 21)));
 
-        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any()))
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any(), any()))
                 .thenThrow(new RuntimeException("PG 승인 실패"));
 
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> subscriptionBillingService.chargeMonthlyFee(10L));
 
         verify(subscriptionChargeCommandService).failCharge(1L);
-        verify(paymentGateWay, org.mockito.Mockito.never()).cancel(any(), org.mockito.ArgumentMatchers.anyInt(), any());
+        verify(paymentGateWay, org.mockito.Mockito.never()).cancel(any(), org.mockito.ArgumentMatchers.anyInt(), any(), any());
     }
 
     @Test
@@ -99,17 +100,17 @@ class SubscriptionBillingServiceTest {
         SubscriptionPayment pending = pendingPayment(1L, 15000);
         TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
         when(subscriptionChargeCommandService.startCharge(10L))
-                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key", LocalDate.of(2026, 8, 21)));
 
         TossBillingApproveResponse response = approveResponse("pk-1");
-        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any())).thenReturn(response);
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any(), any())).thenReturn(response);
         when(subscriptionChargeCommandService.completeCharge(1L, response))
                 .thenThrow(new RuntimeException("DB 반영 실패"));
 
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> subscriptionBillingService.chargeMonthlyFee(10L));
 
-        verify(paymentGateWay).cancel("pk-1", 15000, "구독 결제 반영 실패로 인한 취소");
+        verify(paymentGateWay).cancel(eq("pk-1"), eq(15000), eq("구독 결제 반영 실패로 인한 취소"), any());
         verify(subscriptionChargeCommandService).failCharge(1L);
     }
 
@@ -119,15 +120,15 @@ class SubscriptionBillingServiceTest {
         SubscriptionPayment pending = pendingPayment(1L, 15000);
         TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
         when(subscriptionChargeCommandService.startCharge(10L))
-                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key", LocalDate.of(2026, 8, 21)));
 
         TossBillingApproveResponse response = approveResponse("pk-1");
-        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any())).thenReturn(response);
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any(), any())).thenReturn(response);
         RuntimeException dbFailure = new RuntimeException("DB 반영 실패");
         when(subscriptionChargeCommandService.completeCharge(1L, response)).thenThrow(dbFailure);
         RuntimeException cancelFailure = new RuntimeException("PG 취소도 실패");
         org.mockito.Mockito.doThrow(cancelFailure)
-                .when(paymentGateWay).cancel("pk-1", 15000, "구독 결제 반영 실패로 인한 취소");
+                .when(paymentGateWay).cancel(eq("pk-1"), eq(15000), eq("구독 결제 반영 실패로 인한 취소"), any());
 
         RuntimeException thrown = org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> subscriptionBillingService.chargeMonthlyFee(10L));

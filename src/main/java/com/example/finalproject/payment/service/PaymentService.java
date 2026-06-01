@@ -9,6 +9,7 @@ import com.example.finalproject.order.domain.OrderLine;
 import com.example.finalproject.order.enums.OrderType;
 import com.example.finalproject.order.repository.OrderLineRepository;
 import com.example.finalproject.order.repository.OrderRepository;
+import com.example.finalproject.payment.client.TossIdempotencyKeys;
 import com.example.finalproject.payment.client.TossPaymentsClient;
 import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
@@ -94,8 +95,9 @@ public class PaymentService {
 
     private TossConfirmResponse confirmWithRollback(Long paymentId, TossConfirmRequest confirmRequest) {
         try {
+            String idempotencyKey = TossIdempotencyKeys.forConfirm(paymentId);
             return circuitBreakerFactory.create("toss-payment")
-                    .run(() -> tossPaymentsClient.confirm(confirmRequest), TossCircuitBreakerFallback::rethrow);
+                    .run(() -> tossPaymentsClient.confirm(confirmRequest, idempotencyKey), TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException e) {
             paymentConfirmCommandService.revertPendingToReady(paymentId);
             throw e;
@@ -120,9 +122,10 @@ public class PaymentService {
 
     private void cancelApprovedPayment(Long paymentId, String paymentKey, int amount, BusinessException original) {
         try {
+            String idempotencyKey = TossIdempotencyKeys.forCompensatingCancel(paymentId);
             circuitBreakerFactory.create("toss-payment")
                     .run(() -> {
-                        tossPaymentsClient.cancel(paymentKey, new TossCancelRequest("재고 부족으로 결제 취소", amount));
+                        tossPaymentsClient.cancel(paymentKey, new TossCancelRequest("재고 부족으로 결제 취소", amount), idempotencyKey);
                         return null;
                     }, TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException cancelFailure) {

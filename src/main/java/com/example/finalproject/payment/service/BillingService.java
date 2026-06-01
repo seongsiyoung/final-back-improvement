@@ -3,6 +3,7 @@ package com.example.finalproject.payment.service;
 import com.example.finalproject.global.component.UserLoader;
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
+import com.example.finalproject.payment.client.TossIdempotencyKeys;
 import com.example.finalproject.payment.client.TossPaymentsClient;
 import com.example.finalproject.payment.config.TossCircuitBreakerFallback;
 import com.example.finalproject.payment.domain.PaymentMethod;
@@ -38,9 +39,10 @@ public class BillingService {
         User user = userLoader.loadUserByUsername(email);
         BillingKeyCommandService.BillingIssuePreparation prep = billingKeyCommandService.prepareIssue(user);
 
+        String issueIdempotencyKey = TossIdempotencyKeys.forBillingIssue(request.getAuthKey());
         TossBillingKeyIssueResponse response = circuitBreakerFactory.create("toss-billing")
                 .run(() -> tossPaymentsClient.issueBillingKey(
-                                request.getAuthKey(), new TossBillingKeyIssueRequest(request.getCustomerKey())),
+                                request.getAuthKey(), new TossBillingKeyIssueRequest(request.getCustomerKey()), issueIdempotencyKey),
                         TossCircuitBreakerFallback::rethrow);
 
         PaymentMethod paymentMethod;
@@ -49,8 +51,9 @@ public class BillingService {
                     prep.user(), prep.hasDefaultPaymentMethod(), response);
         } catch (RuntimeException e) {
             try {
+                String deleteIdempotencyKey = TossIdempotencyKeys.forBillingDelete(response.getBillingKey());
                 circuitBreakerFactory.create("toss-billing")
-                        .run(() -> { tossPaymentsClient.deleteBillingKey(response.getBillingKey()); return null; },
+                        .run(() -> { tossPaymentsClient.deleteBillingKey(response.getBillingKey(), deleteIdempotencyKey); return null; },
                                 TossCircuitBreakerFallback::rethrow);
             } catch (RuntimeException compensationFailure) {
                 log.error("빌링키 발급 저장 실패 후 보상(deleteBillingKey)도 실패함. billingKey={}",
@@ -101,8 +104,9 @@ public class BillingService {
 
     public void deletePaymentMethod(String email, Long paymentMethodId) {
         String billingKey = billingKeyCommandService.loadForDelete(email, paymentMethodId);
+        String idempotencyKey = TossIdempotencyKeys.forBillingDelete(billingKey);
         circuitBreakerFactory.create("toss-billing")
-                .run(() -> { tossPaymentsClient.deleteBillingKey(billingKey); return null; }, TossCircuitBreakerFallback::rethrow);
+                .run(() -> { tossPaymentsClient.deleteBillingKey(billingKey, idempotencyKey); return null; }, TossCircuitBreakerFallback::rethrow);
         try {
             billingKeyCommandService.completeDelete(paymentMethodId);
         } catch (RuntimeException e) {
@@ -112,5 +116,4 @@ public class BillingService {
         }
     }
 }
-
 

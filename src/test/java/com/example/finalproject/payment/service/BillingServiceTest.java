@@ -62,7 +62,7 @@ class BillingServiceTest {
         when(billingKeyCommandService.prepareIssue(user)).thenReturn(prep);
 
         TossBillingKeyIssueResponse response = issueResponse("raw-billing-key-from-toss");
-        when(tossPaymentsClient.issueBillingKey(any(), any())).thenReturn(response);
+        when(tossPaymentsClient.issueBillingKey(any(), any(), any())).thenReturn(response);
 
         PaymentMethod savedMethod = PaymentMethod.builder()
                 .user(user)
@@ -82,7 +82,7 @@ class BillingServiceTest {
         billingService.issueCardBillingKey("user@test.com", request);
 
         verify(billingKeyCommandService).completeIssue(user, false, response);
-        verify(tossPaymentsClient, org.mockito.Mockito.never()).deleteBillingKey(any());
+        verify(tossPaymentsClient, org.mockito.Mockito.never()).deleteBillingKey(any(), any());
     }
 
     @Test
@@ -95,7 +95,7 @@ class BillingServiceTest {
         when(billingKeyCommandService.prepareIssue(user)).thenReturn(prep);
 
         TossBillingKeyIssueResponse response = issueResponse("raw-billing-key-from-toss");
-        when(tossPaymentsClient.issueBillingKey(any(), any())).thenReturn(response);
+        when(tossPaymentsClient.issueBillingKey(any(), any(), any())).thenReturn(response);
         when(billingKeyCommandService.completeIssue(user, false, response))
                 .thenThrow(new RuntimeException("DB 저장 실패"));
 
@@ -106,7 +106,7 @@ class BillingServiceTest {
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> billingService.issueCardBillingKey("user@test.com", request));
 
-        verify(tossPaymentsClient).deleteBillingKey("raw-billing-key-from-toss");
+        verify(tossPaymentsClient).deleteBillingKey(eq("raw-billing-key-from-toss"), any());
     }
 
     @Test
@@ -115,7 +115,7 @@ class BillingServiceTest {
 
         billingService.deletePaymentMethod("user@test.com", 10L);
 
-        verify(tossPaymentsClient).deleteBillingKey("plain-billing-key");
+        verify(tossPaymentsClient).deleteBillingKey(eq("plain-billing-key"), any());
         verify(billingKeyCommandService).completeDelete(10L);
     }
 }

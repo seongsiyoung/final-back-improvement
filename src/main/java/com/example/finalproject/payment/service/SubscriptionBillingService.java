@@ -1,5 +1,6 @@
 package com.example.finalproject.payment.service;
 
+import com.example.finalproject.payment.client.TossIdempotencyKeys;
 import com.example.finalproject.payment.client.TossPaymentsClient;
 import com.example.finalproject.payment.config.TossCircuitBreakerFallback;
 import com.example.finalproject.payment.domain.SubscriptionPayment;
@@ -25,11 +26,12 @@ public class SubscriptionBillingService {
                 subscriptionChargeCommandService.startCharge(subscriptionId);
         Long subscriptionPaymentId = start.subscriptionPayment().getId();
         int amount = start.subscriptionPayment().getAmount();
+        String approveIdempotencyKey = TossIdempotencyKeys.forBillingApprove(subscriptionId, start.nextPaymentDate());
 
         TossBillingApproveResponse res;
         try {
             res = circuitBreakerFactory.create("toss-billing")
-                    .run(() -> tossPaymentsClient.approveBilling(start.billingKey(), start.request()),
+                    .run(() -> tossPaymentsClient.approveBilling(start.billingKey(), start.request(), approveIdempotencyKey),
                             TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException e) {
             subscriptionChargeCommandService.failCharge(subscriptionPaymentId);
@@ -40,7 +42,8 @@ public class SubscriptionBillingService {
             return subscriptionChargeCommandService.completeCharge(subscriptionPaymentId, res);
         } catch (RuntimeException e) {
             try {
-                paymentGateWay.cancel(res.getPaymentKey(), amount, "구독 결제 반영 실패로 인한 취소");
+                String cancelIdempotencyKey = TossIdempotencyKeys.forSubscriptionCompensatingCancel(subscriptionPaymentId);
+                paymentGateWay.cancel(res.getPaymentKey(), amount, "구독 결제 반영 실패로 인한 취소", cancelIdempotencyKey);
             } catch (RuntimeException cancelFailure) {
                 // PG 취소 보상 자체가 실패해도 원래 실패 원인(e)을 대체하지 않는다.
                 log.error("구독 결제 반영 실패 후 PG 취소 보상도 실패함. subscriptionPaymentId={}, paymentKey={}",

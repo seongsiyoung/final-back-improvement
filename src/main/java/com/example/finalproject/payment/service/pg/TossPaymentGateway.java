@@ -16,9 +16,9 @@ public class TossPaymentGateway implements PaymentGateWay {
     private final CircuitBreakerFactory<?, ?> circuitBreakerFactory;
 
     @Override
-    public CancelResult cancel(String externalPaymentId, int amount, String reason) {
+    public CancelResult cancel(String externalPaymentId, int amount, String reason, String idempotencyKey) {
         TossCancelResponse response = circuitBreakerFactory.create("toss-payment")
-                .run(() -> tossPaymentsClient.cancel(externalPaymentId, new TossCancelRequest(reason, amount)),
+                .run(() -> tossPaymentsClient.cancel(externalPaymentId, new TossCancelRequest(reason, amount), idempotencyKey),
                         TossCircuitBreakerFallback::rethrow);
         return new CancelResult(response.getCumulativeCanceledAmount());
     }

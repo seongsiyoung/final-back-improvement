@@ -59,14 +59,14 @@ class PaymentServiceTest {
         TossConfirmRequest tossRequest = new TossConfirmRequest("pk-1", "order-1", 15000);
         when(paymentConfirmCommandService.startConfirm(eq("user@test.com"), eq(1L), eq("pk-1")))
                 .thenReturn(tossRequest);
-        when(tossPaymentsClient.confirm(any())).thenReturn(mock(TossConfirmResponse.class));
+        when(tossPaymentsClient.confirm(any(), any())).thenReturn(mock(TossConfirmResponse.class));
 
         BusinessException stockFailure = new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
         when(paymentConfirmCommandService.completeConfirm(eq(1L), eq("pk-1"), any()))
                 .thenThrow(stockFailure);
 
         RuntimeException cancelFailure = new RuntimeException("PG 취소도 실패");
-        when(tossPaymentsClient.cancel(eq("pk-1"), any())).thenThrow(cancelFailure);
+        when(tossPaymentsClient.cancel(eq("pk-1"), any(), any())).thenThrow(cancelFailure);
 
         RuntimeException thrown = org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> paymentService.confirm("user@test.com", confirmRequest(1L)));
@@ -83,7 +83,7 @@ class PaymentServiceTest {
         TossConfirmRequest tossRequest = new TossConfirmRequest("pk-1", "order-1", 15000);
         when(paymentConfirmCommandService.startConfirm(eq("user@test.com"), eq(1L), eq("pk-1")))
                 .thenReturn(tossRequest);
-        when(tossPaymentsClient.confirm(any())).thenReturn(mock(TossConfirmResponse.class));
+        when(tossPaymentsClient.confirm(any(), any())).thenReturn(mock(TossConfirmResponse.class));
 
         BusinessException stockFailure = new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
         when(paymentConfirmCommandService.completeConfirm(eq(1L), eq("pk-1"), any()))
@@ -93,7 +93,7 @@ class PaymentServiceTest {
                 () -> paymentService.confirm("user@test.com", confirmRequest(1L)));
 
         org.assertj.core.api.Assertions.assertThat(thrown).isSameAs(stockFailure);
-        verify(tossPaymentsClient).cancel(eq("pk-1"), any());
+        verify(tossPaymentsClient).cancel(eq("pk-1"), any(), any());
         verify(paymentConfirmCommandService).failPending(1L);
     }
 }
