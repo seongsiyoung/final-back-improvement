@@ -72,13 +72,14 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
     }
 
     private StoreOrder[] createApprovedPaymentWithTwoStoreOrders() {
-        User owner = seeder.seedUserWithAddress("cancel-key-owner-" + System.nanoTime() + "@test.com", "owner1234!");
+        User ownerA = seeder.seedUserWithAddress("cancel-key-owner-a-" + System.nanoTime() + "@test.com", "owner1234!");
+        User ownerB = seeder.seedUserWithAddress("cancel-key-owner-b-" + System.nanoTime() + "@test.com", "owner1234!");
         User buyer = seeder.seedUserWithAddress("cancel-key-buyer-" + System.nanoTime() + "@test.com", "buyer1234!");
         StoreCategory storeCategory = storeCategoryRepository.findByCategoryName("마트/슈퍼")
                 .orElseGet(() -> storeCategoryRepository.save(StoreCategory.builder().categoryName("마트/슈퍼").build()));
 
-        Store storeA = createApprovedStore(owner, storeCategory, "cancel-key-store-a-" + System.nanoTime());
-        Store storeB = createApprovedStore(owner, storeCategory, "cancel-key-store-b-" + System.nanoTime());
+        Store storeA = createApprovedStore(ownerA, storeCategory, "cancel-key-store-a-" + System.nanoTime());
+        Store storeB = createApprovedStore(ownerB, storeCategory, "cancel-key-store-b-" + System.nanoTime());
         Order order = orderRepository.save(Order.builder()
                 .orderNumber("ORD-CANCELKEY-" + System.nanoTime())
                 .user(buyer)
@@ -113,6 +114,7 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
     }
 
     private Store createApprovedStore(User owner, StoreCategory storeCategory, String suffix) {
+        String businessNumber = String.format("%012d", Math.floorMod(System.nanoTime(), 1_000_000_000_000L));
         Store store = storeRepository.save(Store.builder()
                 .owner(owner)
                 .storeCategory(storeCategory)
@@ -123,7 +125,7 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
                 .representativePhone("01099999999")
                 .submittedDocumentInfo(SubmittedDocumentInfo.builder()
                         .businessOwnerName("취소키오너")
-                        .businessNumber("999999999999")
+                        .businessNumber(businessNumber)
                         .telecomSalesReportNumber("제2026-취소키-" + suffix)
                         .build())
                 .address(StoreAddress.builder()
