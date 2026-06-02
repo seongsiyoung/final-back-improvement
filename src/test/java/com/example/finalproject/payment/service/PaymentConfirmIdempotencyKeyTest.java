@@ -29,6 +29,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -94,12 +96,22 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
         ReflectionTestUtils.setField(confirmRequest, "paymentKey", "test-payment-key");
         HttpEntity<PostPaymentConfirmRequest> entity = new HttpEntity<>(confirmRequest, headers);
 
-        restTemplate.exchange("/api/payments/confirm", HttpMethod.POST, entity,
+        ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> firstResponse = restTemplate.exchange(
+                "/api/payments/confirm", HttpMethod.POST, entity,
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
+        assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(firstResponse.getBody()).isNotNull();
+        assertThat(firstResponse.getBody().isSuccess()).isFalse();
+        assertThat(firstResponse.getBody().getError().getCode()).isEqualTo("COMMON-000");
 
         toss.stubConfirmSuccess();
-        restTemplate.exchange("/api/payments/confirm", HttpMethod.POST, entity,
+        ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> secondResponse = restTemplate.exchange(
+                "/api/payments/confirm", HttpMethod.POST, entity,
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
+        assertThat(secondResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(secondResponse.getBody()).isNotNull();
+        assertThat(secondResponse.getBody().isSuccess()).isTrue();
+        assertThat(secondResponse.getBody().getData().getStatus()).isNotBlank();
 
         List<ServeEvent> confirmCalls = toss.server.getAllServeEvents().stream()
                 .filter(e -> e.getRequest().getUrl().equals("/v1/payments/confirm"))
