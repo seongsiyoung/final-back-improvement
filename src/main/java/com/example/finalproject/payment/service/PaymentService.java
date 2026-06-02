@@ -95,7 +95,7 @@ public class PaymentService {
 
     private TossConfirmResponse confirmWithRollback(Long paymentId, TossConfirmRequest confirmRequest) {
         try {
-            String idempotencyKey = TossIdempotencyKeys.forConfirm(paymentId);
+            String idempotencyKey = TossIdempotencyKeys.forConfirm(paymentId, confirmRequest.getPaymentKey());
             return circuitBreakerFactory.create("toss-payment")
                     .run(() -> tossPaymentsClient.confirm(confirmRequest, idempotencyKey), TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException e) {

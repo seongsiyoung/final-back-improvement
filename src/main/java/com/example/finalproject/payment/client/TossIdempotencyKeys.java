@@ -12,8 +12,8 @@ public final class TossIdempotencyKeys {
     private TossIdempotencyKeys() {
     }
 
-    public static String forConfirm(Long paymentId) {
-        return "confirm-" + paymentId;
+    public static String forConfirm(Long paymentId, String paymentKey) {
+        return "confirm-" + paymentId + "-" + sha256Hex(paymentKey);
     }
 
     public static String forStoreCancel(Long paymentId, Long storeOrderId) {

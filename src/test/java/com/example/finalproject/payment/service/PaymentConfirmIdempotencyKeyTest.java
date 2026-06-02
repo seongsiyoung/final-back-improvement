@@ -122,4 +122,42 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
         String secondKey = confirmCalls.get(0).getRequest().getHeader("Idempotency-Key");
         assertThat(firstKey).isNotBlank().isEqualTo(secondKey);
     }
+
+    @Test
+    void retryWithDifferentPaymentKey_sendsDifferentIdempotencyKeyToToss() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+
+        PostPaymentConfirmRequest firstRequest = new PostPaymentConfirmRequest();
+        ReflectionTestUtils.setField(firstRequest, "paymentId", paymentId);
+        ReflectionTestUtils.setField(firstRequest, "paymentKey", "first-payment-key");
+        ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> firstResponse = restTemplate.exchange(
+                "/api/payments/confirm", HttpMethod.POST, new HttpEntity<>(firstRequest, headers),
+                new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
+        assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+
+        toss.stubConfirmSuccess();
+        PostPaymentConfirmRequest secondRequest = new PostPaymentConfirmRequest();
+        ReflectionTestUtils.setField(secondRequest, "paymentId", paymentId);
+        ReflectionTestUtils.setField(secondRequest, "paymentKey", "second-payment-key");
+        ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> secondResponse = restTemplate.exchange(
+                "/api/payments/confirm", HttpMethod.POST, new HttpEntity<>(secondRequest, headers),
+                new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
+        assertThat(secondResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        List<ServeEvent> confirmCalls = toss.server.getAllServeEvents().stream()
+                .filter(e -> e.getRequest().getUrl().equals("/v1/payments/confirm"))
+                .toList();
+        assertThat(confirmCalls).hasSize(2);
+
+        String firstKey = confirmCalls.get(1).getRequest().getHeader("Idempotency-Key");
+        String secondKey = confirmCalls.get(0).getRequest().getHeader("Idempotency-Key");
+        assertThat(firstKey)
+                .isNotBlank()
+                .doesNotContain("first-payment-key", "second-payment-key");
+        assertThat(secondKey)
+                .isNotBlank()
+                .doesNotContain("first-payment-key", "second-payment-key");
+        assertThat(firstKey).isNotEqualTo(secondKey);
+    }
 }

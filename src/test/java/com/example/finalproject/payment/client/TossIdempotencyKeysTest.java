@@ -8,16 +8,17 @@ import org.junit.jupiter.api.Test;
 class TossIdempotencyKeysTest {
 
     @Test
-    void forConfirm_isDeterministicPerPayment() {
-        assertThat(TossIdempotencyKeys.forConfirm(42L))
-                .isEqualTo(TossIdempotencyKeys.forConfirm(42L))
-                .isEqualTo("confirm-42");
+    void forConfirm_isDeterministicPerPaymentKey() {
+        assertThat(TossIdempotencyKeys.forConfirm(42L, "payment-key-a"))
+                .isEqualTo(TossIdempotencyKeys.forConfirm(42L, "payment-key-a"))
+                .startsWith("confirm-42-")
+                .doesNotContain("payment-key-a");
     }
 
     @Test
-    void forConfirm_differsAcrossPayments() {
-        assertThat(TossIdempotencyKeys.forConfirm(1L))
-                .isNotEqualTo(TossIdempotencyKeys.forConfirm(2L));
+    void forConfirm_differsWhenPaymentKeyChangesForSamePayment() {
+        assertThat(TossIdempotencyKeys.forConfirm(42L, "payment-key-a"))
+                .isNotEqualTo(TossIdempotencyKeys.forConfirm(42L, "payment-key-b"));
     }
 
     @Test
