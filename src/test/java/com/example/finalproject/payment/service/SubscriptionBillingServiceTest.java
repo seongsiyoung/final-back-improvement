@@ -1,73 +1,113 @@
 package com.example.finalproject.payment.service;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.finalproject.payment.client.TossPaymentsClient;
-import com.example.finalproject.payment.domain.PaymentMethod;
+import com.example.finalproject.payment.domain.SubscriptionPayment;
+import com.example.finalproject.payment.dto.request.TossBillingApproveRequest;
 import com.example.finalproject.payment.dto.response.TossBillingApproveResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
-import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
-import com.example.finalproject.subscription.domain.Subscription;
-import com.example.finalproject.subscription.domain.SubscriptionProduct;
-import com.example.finalproject.user.domain.User;
+import com.example.finalproject.payment.service.pg.PaymentGateWay;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class SubscriptionBillingServiceTest {
 
     private TossPaymentsClient tossPaymentsClient;
-    private SubscriptionPaymentRepository subscriptionPaymentRepository;
+    private SubscriptionChargeCommandService subscriptionChargeCommandService;
+    private PaymentGateWay paymentGateWay;
     private SubscriptionBillingService subscriptionBillingService;
 
     @BeforeEach
     void setUp() {
         tossPaymentsClient = mock(TossPaymentsClient.class);
-        subscriptionPaymentRepository = mock(SubscriptionPaymentRepository.class);
-        when(subscriptionPaymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        subscriptionChargeCommandService = mock(SubscriptionChargeCommandService.class);
+        paymentGateWay = mock(PaymentGateWay.class);
 
-        subscriptionBillingService = new SubscriptionBillingService(tossPaymentsClient, subscriptionPaymentRepository);
+        subscriptionBillingService = new SubscriptionBillingService(
+                tossPaymentsClient, subscriptionChargeCommandService, paymentGateWay);
     }
 
-    @Test
-    void chargeMonthlyFee_sendsStoredBillingKeyDirectly_toToss() throws Exception {
-        User user = mock(User.class);
-        when(user.getEmail()).thenReturn("user@test.com");
-        when(user.getName()).thenReturn("사용자");
-
-        PaymentMethod paymentMethod = PaymentMethod.builder()
-                .user(user)
-                .methodType(PaymentMethodType.CARD)
-                .billingKey("plain-billing-key")
-                .customerKey("customer-1")
-                .build();
-
-        SubscriptionProduct product = mock(SubscriptionProduct.class);
-        when(product.getSubscriptionProductName()).thenReturn("주간 채소 구독");
-
-        Subscription subscription = mock(Subscription.class);
-        when(subscription.getId()).thenReturn(1L);
-        when(subscription.getPaymentMethod()).thenReturn(paymentMethod);
-        when(subscription.getTotalAmount()).thenReturn(15000);
-        when(subscription.getUser()).thenReturn(user);
-        when(subscription.getSubscriptionProduct()).thenReturn(product);
-
+    private TossBillingApproveResponse approveResponse(String paymentKey) throws Exception {
         String json = """
                 {
-                  "paymentKey": "pk-1", "orderId": "order-1", "orderName": "구독",
+                  "paymentKey": "%s", "orderId": "order-1", "orderName": "구독",
                   "status": "DONE", "approvedAt": "2026-08-20T00:00:00+09:00",
                   "card": { "issuerCode": "61", "acquirerCode": "31", "number": "1234", "cardType": "credit", "ownerType": "personal" }
                 }
-                """;
-        TossBillingApproveResponse response =
-                new ObjectMapper().readValue(json, TossBillingApproveResponse.class);
-        when(tossPaymentsClient.approveBilling(any(), any())).thenReturn(response);
+                """.formatted(paymentKey);
+        return new ObjectMapper().readValue(json, TossBillingApproveResponse.class);
+    }
 
-        subscriptionBillingService.chargeMonthlyFee(subscription);
+    private SubscriptionPayment pendingPayment(Long id, int amount) {
+        SubscriptionPayment pending = SubscriptionPayment.builder()
+                .paymentMethod(PaymentMethodType.CARD)
+                .amount(amount)
+                .pgOrderId("SUB-1-" + id)
+                .pgProvider("TOSS")
+                .build();
+        ReflectionTestUtils.setField(pending, "id", id);
+        return pending;
+    }
 
-        org.mockito.Mockito.verify(tossPaymentsClient).approveBilling(
-                org.mockito.ArgumentMatchers.eq("plain-billing-key"), any());
+    @Test
+    void chargeMonthlyFee_delegatesToCommandService_andReturnsCompleted() throws Exception {
+        SubscriptionPayment pending = pendingPayment(1L, 15000);
+        TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
+        when(subscriptionChargeCommandService.startCharge(10L))
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+
+        TossBillingApproveResponse response = approveResponse("pk-1");
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any())).thenReturn(response);
+
+        SubscriptionPayment completed = pendingPayment(1L, 15000);
+        when(subscriptionChargeCommandService.completeCharge(1L, response)).thenReturn(completed);
+
+        SubscriptionPayment result = subscriptionBillingService.chargeMonthlyFee(10L);
+
+        org.assertj.core.api.Assertions.assertThat(result).isSameAs(completed);
+        verify(subscriptionChargeCommandService).completeCharge(1L, response);
+    }
+
+    @Test
+    void chargeMonthlyFee_whenApproveFails_marksChargeFailed_withoutCancellation() {
+        SubscriptionPayment pending = pendingPayment(1L, 15000);
+        TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
+        when(subscriptionChargeCommandService.startCharge(10L))
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any()))
+                .thenThrow(new RuntimeException("PG 승인 실패"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> subscriptionBillingService.chargeMonthlyFee(10L));
+
+        verify(subscriptionChargeCommandService).failCharge(1L);
+        verify(paymentGateWay, org.mockito.Mockito.never()).cancel(any(), org.mockito.ArgumentMatchers.anyInt(), any());
+    }
+
+    @Test
+    void chargeMonthlyFee_whenCompleteChargeFails_cancelsPgApprovalAndMarksFailed() throws Exception {
+        SubscriptionPayment pending = pendingPayment(1L, 15000);
+        TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
+        when(subscriptionChargeCommandService.startCharge(10L))
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+
+        TossBillingApproveResponse response = approveResponse("pk-1");
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any())).thenReturn(response);
+        when(subscriptionChargeCommandService.completeCharge(1L, response))
+                .thenThrow(new RuntimeException("DB 반영 실패"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> subscriptionBillingService.chargeMonthlyFee(10L));
+
+        verify(paymentGateWay).cancel("pk-1", 15000, "구독 결제 반영 실패로 인한 취소");
+        verify(subscriptionChargeCommandService).failCharge(1L);
     }
 }
