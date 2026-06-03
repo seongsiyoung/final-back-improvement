@@ -10,15 +10,15 @@ import com.example.finalproject.payment.dto.request.TossBillingKeyIssueRequest;
 import com.example.finalproject.payment.dto.response.GetPaymentMethodResponse;
 import com.example.finalproject.payment.dto.response.PostBillingKeyIssueResponse;
 import com.example.finalproject.payment.dto.response.TossBillingKeyIssueResponse;
-import com.example.finalproject.payment.enums.CardIssuer;
-import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.repository.PaymentMethodRepository;
 import com.example.finalproject.user.domain.User;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class BillingService {
@@ -26,33 +26,34 @@ public class BillingService {
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentMethodRepository paymentMethodRepository;
     private final UserLoader userLoader;
+    private final BillingKeyCommandService billingKeyCommandService;
 
-    @Transactional
     public PostBillingKeyIssueResponse issueCardBillingKey(
             String email,
             PostBillingKeyIssueRequest request) {
 
         User user = userLoader.loadUserByUsername(email);
+        BillingKeyCommandService.BillingIssuePreparation prep = billingKeyCommandService.prepareIssue(user);
 
         TossBillingKeyIssueResponse response =
                 tossPaymentsClient.issueBillingKey(
                         request.getAuthKey(),
                         new TossBillingKeyIssueRequest(request.getCustomerKey()));
 
-        boolean hasDefaultPaymentMethod =
-                paymentMethodRepository.existsByUserAndIsDefaultTrue(user);
-
-        PaymentMethod paymentMethod = PaymentMethod.builder()
-                .user(user)
-                .methodType(PaymentMethodType.CARD)
-                .billingKey(response.getBillingKey())
-                .customerKey(response.getCustomerKey())
-                .cardCompany(CardIssuer.getKoreanNameByCode(response.getCard().getIssuerCode()))
-                .cardNumberMasked(response.getCard().getNumber())
-                .isDefault(!hasDefaultPaymentMethod)
-                .build();
-
-        paymentMethodRepository.save(paymentMethod);
+        PaymentMethod paymentMethod;
+        try {
+            paymentMethod = billingKeyCommandService.completeIssue(
+                    prep.user(), prep.hasDefaultPaymentMethod(), response);
+        } catch (RuntimeException e) {
+            try {
+                tossPaymentsClient.deleteBillingKey(response.getBillingKey());
+            } catch (RuntimeException compensationFailure) {
+                log.error("빌링키 발급 저장 실패 후 보상(deleteBillingKey)도 실패함. billingKey={}",
+                        response.getBillingKey(), compensationFailure);
+                e.addSuppressed(compensationFailure);
+            }
+            throw e;
+        }
 
         return new PostBillingKeyIssueResponse(
                 paymentMethod.getCardCompany(),
@@ -93,20 +94,16 @@ public class BillingService {
         targetMethod.setAsDefault();
     }
 
-    @Transactional
     public void deletePaymentMethod(String email, Long paymentMethodId) {
-
-        User user = userLoader.loadUserByUsername(email);
-
-        // 사용자 소유권 검증 포함하여 조회
-        PaymentMethod paymentMethod = paymentMethodRepository
-                .findByIdAndUser_Id(paymentMethodId, user.getId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_METHOD_NOT_FOUND));
-
-        tossPaymentsClient.deleteBillingKey(paymentMethod.getBillingKey());
-
-        paymentMethodRepository.deleteById(paymentMethodId);
-
+        String billingKey = billingKeyCommandService.loadForDelete(email, paymentMethodId);
+        tossPaymentsClient.deleteBillingKey(billingKey);
+        try {
+            billingKeyCommandService.completeDelete(paymentMethodId);
+        } catch (RuntimeException e) {
+            log.error("Toss 빌링키 삭제는 성공했으나 로컬 결제수단 삭제 반영에 실패함. paymentMethodId={}",
+                    paymentMethodId, e);
+            throw e;
+        }
     }
 }
 
