@@ -1,3 +1,10 @@
+feign:
+  client:
+    config:
+      tossPaymentsClient:
+        connect-timeout: 500
+        read-timeout: 1000
+
 spring:
   config:
     activate:

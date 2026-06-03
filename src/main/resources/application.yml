@@ -5,3 +5,10 @@ spring:
     name: Final-Project
   jpa:
     open-in-view: false
+
+feign:
+  client:
+    config:
+      tossPaymentsClient:
+        connect-timeout: 1000
+        read-timeout: 3000
