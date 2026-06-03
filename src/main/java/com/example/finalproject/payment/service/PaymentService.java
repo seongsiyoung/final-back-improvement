@@ -17,6 +17,7 @@ import com.example.finalproject.payment.dto.request.TossCancelRequest;
 import com.example.finalproject.payment.dto.request.TossConfirmRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentConfirmResponse;
 import com.example.finalproject.payment.dto.response.PostPaymentPrepareResponse;
+import com.example.finalproject.payment.config.TossCircuitBreakerFallback;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.PaymentRepository;
@@ -29,9 +30,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentService {
@@ -44,6 +48,7 @@ public class PaymentService {
     private final DeliveryFeeService deliveryFeeService;
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentConfirmCommandService paymentConfirmCommandService;
+    private final CircuitBreakerFactory<?, ?> circuitBreakerFactory;
 
 
     @Transactional
@@ -89,7 +94,8 @@ public class PaymentService {
 
     private TossConfirmResponse confirmWithRollback(Long paymentId, TossConfirmRequest confirmRequest) {
         try {
-            return tossPaymentsClient.confirm(confirmRequest);
+            return circuitBreakerFactory.create("toss-payment")
+                    .run(() -> tossPaymentsClient.confirm(confirmRequest), TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException e) {
             paymentConfirmCommandService.revertPendingToReady(paymentId);
             throw e;
@@ -107,13 +113,27 @@ public class PaymentService {
                     pg
             );
         } catch (BusinessException e) {
-            cancelApprovedPayment(request.getPaymentId(), request.getPaymentKey(), confirmRequest.getAmount());
+            cancelApprovedPayment(request.getPaymentId(), request.getPaymentKey(), confirmRequest.getAmount(), e);
             throw e;
         }
     }
 
-    private void cancelApprovedPayment(Long paymentId, String paymentKey, int amount) {
-        tossPaymentsClient.cancel(paymentKey, new TossCancelRequest("재고 부족으로 결제 취소", amount));
+    private void cancelApprovedPayment(Long paymentId, String paymentKey, int amount, BusinessException original) {
+        try {
+            circuitBreakerFactory.create("toss-payment")
+                    .run(() -> {
+                        tossPaymentsClient.cancel(paymentKey, new TossCancelRequest("재고 부족으로 결제 취소", amount));
+                        return null;
+                    }, TossCircuitBreakerFallback::rethrow);
+        } catch (RuntimeException cancelFailure) {
+            // 보상 취소 자체가 실패해도 원래 실패 원인(original)을 대체하지 않는다 — 재고 부족 등
+            // 원래 원인이 사라지고 취소 실패 예외로 뒤바뀌면 클라이언트가 진짜 원인을 알 수 없다.
+            log.error("결제 승인 반영 실패 후 PG 취소 보상도 실패함. paymentId={}, paymentKey={}",
+                    paymentId, paymentKey, cancelFailure);
+            original.addSuppressed(cancelFailure);
+        }
+        // 취소 보상이 실패해도 failPending은 반드시 호출한다 — 그렇지 않으면 Payment가
+        // PENDING에 영구히 남아 재시도조차 불가능해진다.
         paymentConfirmCommandService.failPending(paymentId);
     }
 

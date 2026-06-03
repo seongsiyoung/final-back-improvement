@@ -4,6 +4,7 @@ import com.example.finalproject.global.component.UserLoader;
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.client.TossPaymentsClient;
+import com.example.finalproject.payment.config.TossCircuitBreakerFallback;
 import com.example.finalproject.payment.domain.PaymentMethod;
 import com.example.finalproject.payment.dto.request.PostBillingKeyIssueRequest;
 import com.example.finalproject.payment.dto.request.TossBillingKeyIssueRequest;
@@ -15,6 +16,7 @@ import com.example.finalproject.user.domain.User;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +29,7 @@ public class BillingService {
     private final PaymentMethodRepository paymentMethodRepository;
     private final UserLoader userLoader;
     private final BillingKeyCommandService billingKeyCommandService;
+    private final CircuitBreakerFactory<?, ?> circuitBreakerFactory;
 
     public PostBillingKeyIssueResponse issueCardBillingKey(
             String email,
@@ -35,10 +38,10 @@ public class BillingService {
         User user = userLoader.loadUserByUsername(email);
         BillingKeyCommandService.BillingIssuePreparation prep = billingKeyCommandService.prepareIssue(user);
 
-        TossBillingKeyIssueResponse response =
-                tossPaymentsClient.issueBillingKey(
-                        request.getAuthKey(),
-                        new TossBillingKeyIssueRequest(request.getCustomerKey()));
+        TossBillingKeyIssueResponse response = circuitBreakerFactory.create("toss-billing")
+                .run(() -> tossPaymentsClient.issueBillingKey(
+                                request.getAuthKey(), new TossBillingKeyIssueRequest(request.getCustomerKey())),
+                        TossCircuitBreakerFallback::rethrow);
 
         PaymentMethod paymentMethod;
         try {
@@ -46,7 +49,9 @@ public class BillingService {
                     prep.user(), prep.hasDefaultPaymentMethod(), response);
         } catch (RuntimeException e) {
             try {
-                tossPaymentsClient.deleteBillingKey(response.getBillingKey());
+                circuitBreakerFactory.create("toss-billing")
+                        .run(() -> { tossPaymentsClient.deleteBillingKey(response.getBillingKey()); return null; },
+                                TossCircuitBreakerFallback::rethrow);
             } catch (RuntimeException compensationFailure) {
                 log.error("빌링키 발급 저장 실패 후 보상(deleteBillingKey)도 실패함. billingKey={}",
                         response.getBillingKey(), compensationFailure);
@@ -96,7 +101,8 @@ public class BillingService {
 
     public void deletePaymentMethod(String email, Long paymentMethodId) {
         String billingKey = billingKeyCommandService.loadForDelete(email, paymentMethodId);
-        tossPaymentsClient.deleteBillingKey(billingKey);
+        circuitBreakerFactory.create("toss-billing")
+                .run(() -> { tossPaymentsClient.deleteBillingKey(billingKey); return null; }, TossCircuitBreakerFallback::rethrow);
         try {
             billingKeyCommandService.completeDelete(paymentMethodId);
         } catch (RuntimeException e) {

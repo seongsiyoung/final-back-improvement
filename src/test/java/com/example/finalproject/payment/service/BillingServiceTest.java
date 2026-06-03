@@ -13,6 +13,7 @@ import com.example.finalproject.payment.dto.request.PostBillingKeyIssueRequest;
 import com.example.finalproject.payment.dto.response.TossBillingKeyIssueResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.repository.PaymentMethodRepository;
+import com.example.finalproject.testsupport.PassThroughCircuitBreakerFactory;
 import com.example.finalproject.user.domain.User;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
@@ -36,7 +37,8 @@ class BillingServiceTest {
         billingKeyCommandService = mock(BillingKeyCommandService.class);
 
         billingService = new BillingService(
-                tossPaymentsClient, paymentMethodRepository, userLoader, billingKeyCommandService);
+                tossPaymentsClient, paymentMethodRepository, userLoader, billingKeyCommandService,
+                PassThroughCircuitBreakerFactory.create());
     }
 
     private TossBillingKeyIssueResponse issueResponse(String billingKey) throws Exception {

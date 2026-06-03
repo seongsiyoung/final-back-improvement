@@ -12,6 +12,7 @@ import com.example.finalproject.payment.dto.request.TossBillingApproveRequest;
 import com.example.finalproject.payment.dto.response.TossBillingApproveResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.service.pg.PaymentGateWay;
+import com.example.finalproject.testsupport.PassThroughCircuitBreakerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,8 @@ class SubscriptionBillingServiceTest {
         paymentGateWay = mock(PaymentGateWay.class);
 
         subscriptionBillingService = new SubscriptionBillingService(
-                tossPaymentsClient, subscriptionChargeCommandService, paymentGateWay);
+                tossPaymentsClient, subscriptionChargeCommandService, paymentGateWay,
+                PassThroughCircuitBreakerFactory.create());
     }
 
     private TossBillingApproveResponse approveResponse(String paymentKey) throws Exception {
@@ -108,6 +110,32 @@ class SubscriptionBillingServiceTest {
                 () -> subscriptionBillingService.chargeMonthlyFee(10L));
 
         verify(paymentGateWay).cancel("pk-1", 15000, "구독 결제 반영 실패로 인한 취소");
+        verify(subscriptionChargeCommandService).failCharge(1L);
+    }
+
+    @Test
+    void chargeMonthlyFee_whenCompleteChargeAndCancelBothFail_preservesOriginalException_andStillMarksFailed()
+            throws Exception {
+        SubscriptionPayment pending = pendingPayment(1L, 15000);
+        TossBillingApproveRequest request = TossBillingApproveRequest.builder().build();
+        when(subscriptionChargeCommandService.startCharge(10L))
+                .thenReturn(new SubscriptionChargeCommandService.ChargeStart(pending, request, "plain-billing-key"));
+
+        TossBillingApproveResponse response = approveResponse("pk-1");
+        when(tossPaymentsClient.approveBilling(eq("plain-billing-key"), any())).thenReturn(response);
+        RuntimeException dbFailure = new RuntimeException("DB 반영 실패");
+        when(subscriptionChargeCommandService.completeCharge(1L, response)).thenThrow(dbFailure);
+        RuntimeException cancelFailure = new RuntimeException("PG 취소도 실패");
+        org.mockito.Mockito.doThrow(cancelFailure)
+                .when(paymentGateWay).cancel("pk-1", 15000, "구독 결제 반영 실패로 인한 취소");
+
+        RuntimeException thrown = org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> subscriptionBillingService.chargeMonthlyFee(10L));
+
+        // 취소 보상 실패가 원래 원인(DB 반영 실패)을 대체하지 않아야 한다.
+        org.assertj.core.api.Assertions.assertThat(thrown).isSameAs(dbFailure);
+        org.assertj.core.api.Assertions.assertThat(thrown.getSuppressed()).contains(cancelFailure);
+        // 취소 보상이 실패해도 failCharge는 반드시 호출돼야 한다.
         verify(subscriptionChargeCommandService).failCharge(1L);
     }
 }
