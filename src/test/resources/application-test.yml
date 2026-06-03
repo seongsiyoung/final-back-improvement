@@ -123,6 +123,8 @@ toss:
   payments:
     base-url: "http://localhost:0"
     secret-key: test-toss-secret
+  circuit-breaker:
+    wait-duration-in-open-state-ms: 500
 
 crypto:
   billing:
