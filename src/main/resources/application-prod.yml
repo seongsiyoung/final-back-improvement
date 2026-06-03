@@ -112,6 +112,8 @@ toss:
   payments:
     base-url: https://api.tosspayments.com
     secret-key: ${TOSS_SECRET_KEY}
+    connect-timeout-ms: 1000
+    read-timeout-ms: 3000
 
 crypto:
   billing:

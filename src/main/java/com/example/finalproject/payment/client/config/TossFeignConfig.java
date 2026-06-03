@@ -7,7 +7,6 @@ import feign.RequestInterceptor;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.concurrent.TimeUnit;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 
 public class TossFeignConfig {
@@ -23,17 +22,17 @@ public class TossFeignConfig {
 
     /**
      * @FeignClient(configuration = ...)로 커스텀 설정 클래스를 지정하면, Spring Cloud OpenFeign이
-     * feign.client.config.tossPaymentsClient.*(application.yml) 기반 타임아웃 설정을 무시하고
-     * feign 기본값(connect 10s / read 60s)으로 덮어쓴다. 같은 yml 값을 그대로 읽어 Options 빈을
-     * 직접 등록해 이 문제를 우회한다 — yml이 여전히 유일한 값 출처다.
+     * feign.client.config.* 기반 자동 설정을 적용하지 않고 feign 기본값(connect 10s / read 60s)으로
+     * 덮어쓴다(Task 5에서 실측으로 확인). 그래서 Request.Options 빈을 직접 등록해야 하는데, 값 자체는
+     * TossPaymentsProperties(toss.payments.*, 이 클래스 전용 프로퍼티임이 이름에서부터 명확함)에서
+     * 가져온다 — feign.client.config.* 이름을 재사용하면 "Spring Cloud가 자동으로 읽어갈 것"이라는
+     * 착각을 유발하기 쉽다.
      */
     @Bean
-    public Request.Options tossRequestOptions(
-            @Value("${feign.client.config.tossPaymentsClient.connect-timeout}") int connectTimeoutMs,
-            @Value("${feign.client.config.tossPaymentsClient.read-timeout}") int readTimeoutMs) {
+    public Request.Options tossRequestOptions(TossPaymentsProperties props) {
         return new Request.Options(
-                connectTimeoutMs, TimeUnit.MILLISECONDS,
-                readTimeoutMs, TimeUnit.MILLISECONDS,
+                props.getConnectTimeoutMs(), TimeUnit.MILLISECONDS,
+                props.getReadTimeoutMs(), TimeUnit.MILLISECONDS,
                 false);
     }
 }
