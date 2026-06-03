@@ -13,7 +13,6 @@ import com.example.finalproject.payment.dto.response.TossBillingKeyIssueResponse
 import com.example.finalproject.payment.enums.CardIssuer;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.repository.PaymentMethodRepository;
-import com.example.finalproject.payment.util.BillingKeyCryptoUtil;
 import com.example.finalproject.user.domain.User;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -27,7 +26,6 @@ public class BillingService {
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentMethodRepository paymentMethodRepository;
     private final UserLoader userLoader;
-    private final BillingKeyCryptoUtil billingKeyCryptoUtil;
 
     @Transactional
     public PostBillingKeyIssueResponse issueCardBillingKey(
@@ -41,16 +39,13 @@ public class BillingService {
                         request.getAuthKey(),
                         new TossBillingKeyIssueRequest(request.getCustomerKey()));
 
-        // 빌링키 암호화
-        String encryptedBillingKey = billingKeyCryptoUtil.encrypt(response.getBillingKey());
-
         boolean hasDefaultPaymentMethod =
                 paymentMethodRepository.existsByUserAndIsDefaultTrue(user);
 
         PaymentMethod paymentMethod = PaymentMethod.builder()
                 .user(user)
                 .methodType(PaymentMethodType.CARD)
-                .billingKey(encryptedBillingKey)
+                .billingKey(response.getBillingKey())
                 .customerKey(response.getCustomerKey())
                 .cardCompany(CardIssuer.getKoreanNameByCode(response.getCard().getIssuerCode()))
                 .cardNumberMasked(response.getCard().getNumber())
@@ -108,7 +103,7 @@ public class BillingService {
                 .findByIdAndUser_Id(paymentMethodId, user.getId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_METHOD_NOT_FOUND));
 
-        tossPaymentsClient.deleteBillingKey(billingKeyCryptoUtil.decrypt(paymentMethod.getBillingKey()));
+        tossPaymentsClient.deleteBillingKey(paymentMethod.getBillingKey());
 
         paymentMethodRepository.deleteById(paymentMethodId);
 

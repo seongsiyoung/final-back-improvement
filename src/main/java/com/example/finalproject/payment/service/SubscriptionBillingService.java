@@ -9,7 +9,6 @@ import com.example.finalproject.payment.enums.CardIssuer;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
-import com.example.finalproject.payment.util.BillingKeyCryptoUtil;
 import com.example.finalproject.subscription.domain.Subscription;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +23,6 @@ public class SubscriptionBillingService {
 
     private final TossPaymentsClient tossPaymentsClient;
     private final SubscriptionPaymentRepository subscriptionPaymentRepository;
-    private final BillingKeyCryptoUtil billingKeyCryptoUtil;
 
     @Transactional
     public SubscriptionPayment chargeMonthlyFee(Subscription subscription) {
@@ -54,7 +52,7 @@ public class SubscriptionBillingService {
                 .build();
 
         TossBillingApproveResponse res =
-                tossPaymentsClient.approveBilling(billingKeyCryptoUtil.decrypt(paymentMethod.getBillingKey()), req);
+                tossPaymentsClient.approveBilling(paymentMethod.getBillingKey(), req);
 
         String koreanNameByCode = CardIssuer.getKoreanNameByCode(res.getCard().getIssuerCode());
 
