@@ -22,11 +22,13 @@ import com.example.finalproject.product.domain.ProductCategory;
 import com.example.finalproject.product.repository.ProductCategoryRepository;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
+import com.example.finalproject.store.domain.StoreBusinessHour;
 import com.example.finalproject.store.domain.StoreCategory;
 import com.example.finalproject.store.domain.embedded.SettlementAccount;
 import com.example.finalproject.store.domain.embedded.StoreAddress;
 import com.example.finalproject.store.domain.embedded.SubmittedDocumentInfo;
 import com.example.finalproject.store.enums.StoreActiveStatus;
+import com.example.finalproject.store.repository.StoreBusinessHourRepository;
 import com.example.finalproject.store.repository.StoreCategoryRepository;
 import com.example.finalproject.store.repository.StoreRepository;
 import com.example.finalproject.subscription.domain.Subscription;
@@ -80,6 +82,7 @@ public class LocalDataInitializer implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final StoreCategoryRepository storeCategoryRepository;
     private final StoreRepository storeRepository;
+    private final StoreBusinessHourRepository storeBusinessHourRepository;
     private final ProductRepository productRepository;
     private final CartRepository cartRepository;
     private final CartProductRepository cartProductRepository;
@@ -231,10 +234,10 @@ public class LocalDataInitializer implements CommandLineRunner {
             StoreCategory martCategory = storeCategoryRepository.findByCategoryName("마트/슈퍼")
                     .orElseThrow();
             StoreAddress address = StoreAddress.builder()
-                    .postalCode("06134")
-                    .addressLine1("서울시 강남구 테스트로 123")
+                    .postalCode("04524")
+                    .addressLine1("서울특별시 중구 세종대로 110")
                     .addressLine2("1층")
-                    .location(GeometryUtil.createPoint(127.0276, 37.4979))
+                    .location(GeometryUtil.createPoint(126.9779, 37.5663))
                     .build();
             SettlementAccount settlement = SettlementAccount.builder()
                     .bankName("테스트은행")
@@ -260,6 +263,8 @@ public class LocalDataInitializer implements CommandLineRunner {
                     .build();
             newStore = storeRepository.save(newStore);
             newStore.approve();
+            newStore.setDeliveryAvailable(true);
+            seedBusinessHoursAllDaysOpen(newStore);
             log.info("결제 더미데이터: 스토어 생성 - {}", newStore.getStoreName());
             return newStore;
         });
@@ -339,10 +344,10 @@ public class LocalDataInitializer implements CommandLineRunner {
                         .user(testUser)
                         .contact("01011111111")
                         .addressName("우리 집")
-                        .postalCode("06134")
-                        .addressLine1("서울시 강남구 테헤란로 123")
+                        .postalCode("04524")
+                        .addressLine1("서울특별시 중구 세종대로 110")
                         .addressLine2("1층")
-                        .location(GeometryUtil.createPoint(127.0276, 37.4979))
+                        .location(GeometryUtil.createPoint(126.9779, 37.5663))
                         .isDefault(true)
                         .build();
                 addressRepository.save(addr);
@@ -605,8 +610,9 @@ public class LocalDataInitializer implements CommandLineRunner {
      * ~1.5km → 배송비 4,000원 - 3km 이내 테스트마트: ~2.5km → 배송비 5,000원
      */
     private void seedDistanceTestMarts(Role userRole) {
-        double baseLon = 127.0276;
-        double baseLat = 37.4979;
+        // user@test.com 기본 배송지(서울특별시 중구 세종대로 110)와 같은 기준점.
+        double baseLon = 126.9779;
+        double baseLat = 37.5663;
         // 위도 1도 ≈ 111km → 0.5km ≈ 0.0045, 1.5km ≈ 0.0135, 2.5km ≈ 0.0225
         List<Object[]> marts = List.of(
                 new Object[]{"mart1km@test.com", "1km이내 테스트마트", baseLon, baseLat + 0.0045, "거리 0.5km → 배송비 3,000원",
@@ -674,6 +680,7 @@ public class LocalDataInitializer implements CommandLineRunner {
                 store.approve();
                 store.setDeliveryAvailable(true);
                 store.setActiveStatus(StoreActiveStatus.ACTIVE);
+                seedBusinessHoursAllDaysOpen(store);
                 log.info("거리 테스트마트 시드: {} (배송비 구간 테스트용)", storeName);
                 for (String productName : List.of("테스트 상품 A", "테스트 상품 B")) {
                     if (!productRepository.existsByStoreAndProductNameAndDeletedAtIsNull(store, productName)) {
@@ -709,6 +716,25 @@ public class LocalDataInitializer implements CommandLineRunner {
                         log.info("거리 테스트마트 시드: user@test.com 장바구니에 [{}] 1건 담김 (배송비 확인용)", storeName);
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * 매장 검색(StoreRepositoryImpl.notClosedToday)이 "오늘 요일에 isClosed=false인
+     * 영업시간 행이 있는 매장만" 보여준다. 이 행이 하나도 없으면 그 매장은 위치·배달가능
+     * 여부와 무관하게 검색 결과에서 항상 빠진다 — 그래서 더미 매장마다 요일 7개를 전부 채운다.
+     */
+    private void seedBusinessHoursAllDaysOpen(Store store) {
+        for (short day = 0; day < 7; day++) {
+            if (storeBusinessHourRepository.findByStoreAndDayOfWeek(store, day).isEmpty()) {
+                storeBusinessHourRepository.save(StoreBusinessHour.builder()
+                        .store(store)
+                        .dayOfWeek(day)
+                        .openTime(java.time.LocalTime.of(9, 0))
+                        .closeTime(java.time.LocalTime.of(22, 0))
+                        .isClosed(false)
+                        .build());
             }
         }
     }

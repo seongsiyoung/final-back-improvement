@@ -112,8 +112,11 @@ toss:
   payments:
     base-url: https://api.tosspayments.com
     secret-key: ${TOSS_SECRET_KEY}
-    connect-timeout-ms: 1000
-    read-timeout-ms: 3000
+    # connect-timeout은 Toss 권장값이 없어, Spring Cloud OpenFeign HTTP client의
+    # 기본값(2000ms)을 기준으로 잡았다 — DNS 조회·순간 네트워크 지연을 흡수할 여유.
+    connect-timeout-ms: 2000
+    # Toss 공식 문서(결제 처리 관련 API는 read-timeout 60초 권장) 그대로 적용.
+    read-timeout-ms: 60000
 
 crypto:
   billing:

@@ -1,6 +1,7 @@
 package com.example.finalproject.payment.config;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.timelimiter.TimeLimiterConfig;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
@@ -11,8 +12,16 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class TossResilienceConfig {
 
+    // TimeLimiter가 Feign read-timeout보다 항상 늦게 끊기도록 두는 여유 시간.
+    // 이 값 자체를 따로 튜닝할 이유는 없어서 설정값으로 안 빼고 상수로 고정한다 —
+    // "Feign이 먼저 끊는다"는 목적만 지키면 되므로 정확한 크기는 중요하지 않다.
+    private static final long TIME_LIMITER_BUFFER_MS = 2000;
+
     @Value("${toss.circuit-breaker.wait-duration-in-open-state-ms:10000}")
     private long waitDurationInOpenStateMs;
+
+    @Value("${toss.payments.read-timeout-ms:3000}")
+    private long tossReadTimeoutMs;
 
     /**
      * 서킷브레이커 인스턴스 2개.
@@ -21,16 +30,20 @@ public class TossResilienceConfig {
      * 하나로 통합하지 않는 이유: 결제 승인 경로 장애가 빌링키 발급 같은 무관한 기능까지
      * 회로를 열어버리는 것을 막기 위함(영향 범위 분리).
      *
-     * TimeLimiter는 의도적으로 설정하지 않는다 — Resilience4j의 TimeLimiter는 supplier를
-     * 별도 스레드풀에서 비동기로 실행하고 호출 스레드는 Future.get(timeout)으로 대기하는
-     * 방식이라, PG 호출 1건마다 톰캣 워커 스레드 + TimeLimiter 실행 스레드 2개를 점유하게
-     * 된다. 시간 제한은 이미 Feign read-timeout(TossFeignConfig, 3초)이 동기적으로(같은
-     * 스레드 안에서) 걸어주고 있어 TimeLimiter가 없어도 무제한 대기가 생기지 않는다 —
-     * 스레드를 이중으로 쓰면서까지 얻을 추가 이득이 없다.
+     * TimeLimiter를 명시적으로 설정한다 — 원래는 "Feign read-timeout이 이미 동기적으로
+     * 시간 제한을 걸어주니 TimeLimiter는 불필요하다"고 판단해서 뺐었다. 그런데 Spring
+     * Cloud Circuit Breaker의 Resilience4j 구현체는 TimeLimiter를 커스터마이징하지
+     * 않아도 기본값(TimeLimiterConfig.ofDefaults(), timeoutDuration=1초)을 항상
+     * 적용한다 — "TimeLimiter를 안 쓴다"는 선택지 자체가 없다. WireMock(응답 100ms
+     * 미만)으로 하는 자동화 테스트에서는 이 1초 제한에 걸릴 일이 없어서 안 드러났는데,
+     * 실제 Toss 서버로 나가는 요청이 1초를 넘기면서 Feign read-timeout(3초)보다 먼저
+     * 끊겨버리는 게 실측(로컬 프로파일, 실제 웹훅 수신 검증 중)으로 발견됐다. Feign
+     * read-timeout 값(toss.payments.read-timeout-ms)보다 넉넉히 긴 시간으로 맞춰서,
+     * 실제로 시간을 끊는 주체가 항상 Feign이 되도록(원래 의도한 동작) 되돌린다.
      */
     @Bean
     public Customizer<Resilience4JCircuitBreakerFactory> tossCircuitBreakerCustomizer() {
-        CircuitBreakerConfig sharedConfig = CircuitBreakerConfig.custom()
+        CircuitBreakerConfig sharedCircuitBreakerConfig = CircuitBreakerConfig.custom()
                 .slidingWindowSize(10)
                 .minimumNumberOfCalls(5)
                 .failureRateThreshold(50.0f)
@@ -38,8 +51,14 @@ public class TossResilienceConfig {
                 .permittedNumberOfCallsInHalfOpenState(3)
                 .build();
 
+        TimeLimiterConfig sharedTimeLimiterConfig = TimeLimiterConfig.custom()
+                .timeoutDuration(Duration.ofMillis(tossReadTimeoutMs + TIME_LIMITER_BUFFER_MS))
+                .build();
+
         return factory -> factory.configure(
-                builder -> builder.circuitBreakerConfig(sharedConfig),
+                builder -> builder
+                        .circuitBreakerConfig(sharedCircuitBreakerConfig)
+                        .timeLimiterConfig(sharedTimeLimiterConfig),
                 "toss-payment", "toss-billing");
     }
 }
