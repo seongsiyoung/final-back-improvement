@@ -2,6 +2,7 @@ package com.example.finalproject.testsupport;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.delete;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
 
@@ -128,5 +129,32 @@ public class TossStub implements BeforeAllCallback, AfterAllCallback, BeforeEach
                                   "card": { "issuerCode": "61", "acquirerCode": "31", "number": "1234", "cardType": "credit", "ownerType": "personal" }
                                 }
                                 """.formatted(paymentKey))));
+    }
+
+    public void stubGetPaymentByOrderIdStatus(String orderId, String status) {
+        server.stubFor(get(urlPathMatching("/v1/payments/orders/" + orderId))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {
+                                  "paymentKey": "test-payment-key",
+                                  "orderId": "%s",
+                                  "totalAmount": 10000,
+                                  "status": "%s",
+                                  "approvedAt": "2026-08-17T00:00:00+09:00",
+                                  "receipt": { "url": "https://dashboard.tosspayments.com/receipt/test" }
+                                }
+                                """.formatted(orderId, status))));
+    }
+
+    public void stubGetPaymentByOrderIdNotFound(String orderId) {
+        server.stubFor(get(urlPathMatching("/v1/payments/orders/" + orderId))
+                .willReturn(aResponse()
+                        .withStatus(404)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                { "code": "NOT_FOUND_PAYMENT", "message": "존재하지 않는 결제 정보입니다." }
+                                """)));
     }
 }
