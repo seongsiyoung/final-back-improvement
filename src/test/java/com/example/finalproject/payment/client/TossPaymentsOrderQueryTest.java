@@ -34,6 +34,9 @@ class TossPaymentsOrderQueryTest extends IntegrationTestSupport {
 
         assertThat(response.getStatus()).isEqualTo("DONE");
         assertThat(response.getOrderId()).isEqualTo("order-1");
+        // 이 메서드를 만든 이유가 PENDING 상태(아직 paymentKey가 없는)의 결제에 paymentKey를
+        // 채워 넣기 위해서라, paymentKey가 실제로 응답에 채워지는지가 핵심 검증 대상이다.
+        assertThat(response.getPaymentKey()).isNotBlank();
     }
 
     @Test

@@ -4,6 +4,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.delete;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
 
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
@@ -132,7 +133,7 @@ public class TossStub implements BeforeAllCallback, AfterAllCallback, BeforeEach
     }
 
     public void stubGetPaymentByOrderIdStatus(String orderId, String status) {
-        server.stubFor(get(urlPathMatching("/v1/payments/orders/" + orderId))
+        server.stubFor(get(urlPathEqualTo("/v1/payments/orders/" + orderId))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
@@ -149,7 +150,7 @@ public class TossStub implements BeforeAllCallback, AfterAllCallback, BeforeEach
     }
 
     public void stubGetPaymentByOrderIdNotFound(String orderId) {
-        server.stubFor(get(urlPathMatching("/v1/payments/orders/" + orderId))
+        server.stubFor(get(urlPathEqualTo("/v1/payments/orders/" + orderId))
                 .willReturn(aResponse()
                         .withStatus(404)
                         .withHeader("Content-Type", "application/json")
