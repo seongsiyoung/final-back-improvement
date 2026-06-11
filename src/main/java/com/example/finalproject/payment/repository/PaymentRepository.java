@@ -50,4 +50,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findWithLockByOrder_Id(Long orderId);
 
     Optional<Payment> findByPgOrderId(String pgOrderId);
+
+    List<Payment> findByPaymentStatusAndUpdatedAtBefore(PaymentStatus paymentStatus, LocalDateTime threshold);
 }

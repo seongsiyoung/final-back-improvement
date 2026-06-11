@@ -133,20 +133,23 @@ public class TossStub implements BeforeAllCallback, AfterAllCallback, BeforeEach
     }
 
     public void stubGetPaymentByOrderIdStatus(String orderId, String status) {
+        // paymentKey를 orderId 기반으로 만든다 — Payment.paymentKey는 UNIQUE 제약이 있어서,
+        // 서로 다른 결제 여러 건을 한 테스트에서 동시에 재조회할 때 같은 값을 재사용하면
+        // completeConfirm()의 approve() 저장 단계에서 제약 위반이 난다.
         server.stubFor(get(urlPathEqualTo("/v1/payments/orders/" + orderId))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("""
                                 {
-                                  "paymentKey": "test-payment-key",
+                                  "paymentKey": "pk-%s",
                                   "orderId": "%s",
                                   "totalAmount": 10000,
                                   "status": "%s",
                                   "approvedAt": "2026-08-17T00:00:00+09:00",
                                   "receipt": { "url": "https://dashboard.tosspayments.com/receipt/test" }
                                 }
-                                """.formatted(orderId, status))));
+                                """.formatted(orderId, orderId, status))));
     }
 
     public void stubGetPaymentByOrderIdNotFound(String orderId) {
