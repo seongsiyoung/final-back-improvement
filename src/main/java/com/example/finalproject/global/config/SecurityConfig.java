@@ -167,7 +167,8 @@ public class SecurityConfig {
                                 "/api/auth/password-reset/request",
                                 "/api/auth/password-reset/confirm",
                                 "/api/auth/send-verification",
-                                "/api/auth/verify-phone")
+                                "/api/auth/verify-phone",
+                                "/api/payments/webhooks/toss")
                         .permitAll()
                         .requestMatchers(
                                 "/error",
