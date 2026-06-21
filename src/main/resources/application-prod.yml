@@ -36,6 +36,14 @@ spring:
         secret-key: ${AWS_SECRET_ACCESS_KEY}
       region:
         static: ${AWS_REGION}
+    openfeign:
+      client:
+        config:
+          # base-url/secret-key는 하단 toss.payments 참고
+          tossPaymentsClient:
+            connect-timeout: 1000
+            read-timeout: 3000
+            follow-redirects: false
 
   servlet:
     multipart:
@@ -110,10 +118,9 @@ logging:
 
 toss:
   payments:
+    # connect/read-timeout, follow-redirects는 위 spring.cloud.openfeign.client.config.tossPaymentsClient 참고
     base-url: https://api.tosspayments.com
     secret-key: ${TOSS_SECRET_KEY}
-    connect-timeout-ms: 1000
-    read-timeout-ms: 3000
 
 crypto:
   billing:
