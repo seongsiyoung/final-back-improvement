@@ -4,6 +4,7 @@ import com.example.finalproject.subscription.domain.Subscription;
 import com.example.finalproject.subscription.domain.SubscriptionProduct;
 import com.example.finalproject.subscription.enums.SubscriptionStatus;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -68,6 +69,18 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
             + "where s.status = :status "
             + "and s.nextPaymentDate <= :today")
     List<Long> findIdsByStatusAndNextPaymentDateLessThanEqual(SubscriptionStatus status, LocalDate today);
+
+    /**
+     * 결제 실패(PAYMENT_FAILED) 상태이면서 재시도 시각이 도래했고 아직 재시도 횟수를
+     * 소진하지 않은 구독을 조회한다. SubscriptionBillingScheduler가 기존 ACTIVE 대상
+     * 목록과 합쳐서 처리한다.
+     */
+    @Query("select s.id "
+            + "from Subscription s "
+            + "where s.status = :status "
+            + "and s.nextRetryAt <= :now "
+            + "and s.failCount < :maxRetries")
+    List<Long> findIdsRetryTargets(SubscriptionStatus status, LocalDateTime now, int maxRetries);
 
     long countBySubscriptionProductAndStatusIn(SubscriptionProduct subscriptionProduct,
                                                Collection<SubscriptionStatus> statuses);
