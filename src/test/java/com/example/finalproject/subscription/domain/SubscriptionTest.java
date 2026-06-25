@@ -77,4 +77,17 @@ class SubscriptionTest {
                 .doesNotThrowAnyException();
         assertThat(subscription.getStatus()).isEqualTo(SubscriptionStatus.CANCELLATION_PENDING);
     }
+
+    @Test
+    void cancelCancellation_afterRequestedFromPaymentFailed_resetsFailCount() {
+        Subscription subscription = activeSubscription();
+        subscription.markPaymentFailed();
+        subscription.requestCancellation("결제 실패로 인한 해지");
+
+        subscription.cancelCancellation();
+
+        assertThat(subscription.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(subscription.getFailCount()).isEqualTo(0);
+        assertThat(subscription.getNextRetryAt()).isNull();
+    }
 }

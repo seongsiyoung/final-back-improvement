@@ -159,6 +159,10 @@ public class Subscription extends BaseTimeEntity {
         this.status = SubscriptionStatus.ACTIVE;
         this.cancelReason = null;
         this.cancelledAt = null;
+        // PAYMENT_FAILED 상태에서 해지 요청 후 취소한 경우, 실패 이력을 남긴 채
+        // ACTIVE로 돌아가면 이후 markPaymentFailed()가 failCount를 이어서 증가시켜
+        // isRetryExhausted() 판정이 실제보다 빨리 소진되므로 여기서 리셋한다.
+        resetFailCount();
     }
 
     /**
