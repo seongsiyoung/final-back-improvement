@@ -24,9 +24,10 @@ import org.springframework.stereotype.Component;
 public class SubscriptionBillingScheduler {
 
     /**
-     * 최대 재시도 횟수. 이 횟수에 도달하면 더 이상 재시도 대상 조회에 걸리지 않는다
-     * (design.md "남은 미결정 사항" 참고 — 최대 재시도 횟수는 이 스케줄러 연결 시점에
-     * 확정하기로 했었고, 3회로 정했다: 결제 실패 후 최대 3일에 걸쳐 재시도한다).
+     * 최대 재시도 횟수. 이 횟수에 도달하면 더 이상 재시도 대상 조회에 걸리지 않는다.
+     * RETRY_BACKOFF_DAYS(1일)와 곱하면 "결제 실패 후 최대 3일에 걸쳐 재시도"가 된다.
+     * 이 숫자 자체는 사업 요구사항 확인 없이 구현 중 정한 잠정값이다 — 배포 전 재검토
+     * 필요(design.md "설계 > 정기결제 > 전이" 참고).
      */
     private static final int MAX_RETRIES = 3;
 

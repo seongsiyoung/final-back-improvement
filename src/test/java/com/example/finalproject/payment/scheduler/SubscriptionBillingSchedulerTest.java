@@ -125,6 +125,61 @@ class SubscriptionBillingSchedulerTest extends IntegrationTestSupport {
         assertThat(reloaded.getStatus()).isEqualTo(SubscriptionStatus.PAYMENT_FAILED);
     }
 
+    private Subscription seedActiveSubscriptionDueToday() {
+        String email = "sub-sched-active-" + System.nanoTime() + "@test.com";
+        User user = seeder.seedUserWithAddress(email, "password1234!");
+        Store store = seeder.seedStoreWithProducts(1, 10);
+        Address address = addressRepository.findByUserOrderByIsDefaultDesc(user).get(0);
+
+        PaymentMethod paymentMethod = paymentMethodRepository.save(PaymentMethod.builder()
+                .user(user)
+                .methodType(PaymentMethodType.CARD)
+                .billingKey("stub-billing-key")
+                .customerKey("customer-sched-active-" + System.nanoTime())
+                .isDefault(true)
+                .build());
+
+        SubscriptionProduct product = subscriptionProductRepository.save(SubscriptionProduct.builder()
+                .store(store)
+                .subscriptionProductName("주간 채소 구독")
+                .description("테스트용 구독 상품")
+                .price(15000)
+                .totalDeliveryCount(4)
+                .deliveryCountOfWeek(1)
+                .build());
+
+        return subscriptionRepository.save(Subscription.builder()
+                .user(user)
+                .store(store)
+                .subscriptionProduct(product)
+                .address(address)
+                .paymentMethod(paymentMethod)
+                .totalAmount(15000)
+                .startedAt(LocalDateTime.now())
+                .nextPaymentDate(LocalDate.now())
+                .deliveryTimeSlot("08:00~11:00")
+                .status(SubscriptionStatus.ACTIVE)
+                .build());
+    }
+
+    @Test
+    @Transactional
+    void processRecurringPayments_whenNewChargeAndRetryBothDue_processesBoth() {
+        toss.stubApproveBillingSuccess("stub-payment-key-mixed");
+        Subscription activeSubscription = seedActiveSubscriptionDueToday();
+        Subscription retrySubscription = seedPaymentFailedSubscription();
+        backdateNextRetryAt(retrySubscription.getId(), LocalDateTime.now().minusMinutes(1));
+
+        scheduler.processRecurringPayments();
+
+        Subscription reloadedActive = subscriptionRepository.findById(activeSubscription.getId()).orElseThrow();
+        Subscription reloadedRetry = subscriptionRepository.findById(retrySubscription.getId()).orElseThrow();
+        assertThat(reloadedActive.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(reloadedActive.getNextPaymentDate()).isAfter(LocalDate.now());
+        assertThat(reloadedRetry.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(reloadedRetry.getFailCount()).isEqualTo(0);
+    }
+
     @Test
     @Transactional
     void processRecurringPayments_whenRetryExhausted_doesNotRetry() {
