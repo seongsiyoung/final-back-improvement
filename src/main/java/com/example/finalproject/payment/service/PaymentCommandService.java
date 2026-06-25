@@ -68,13 +68,16 @@ public class PaymentCommandService {
     }
 
     @Transactional
-    public void revertRefundRequest(Long orderId) {
+    public void revertRefundRequestAndMarkFailed(Long orderId, Long storeOrderId) {
 
         Payment payment = findPaymentWithLock(orderId);
 
         if (payment.getPaymentStatus() == PaymentStatus.REFUND_REQUESTED) {
             payment.revertToPaid();
         }
+
+        paymentRefundRepository.findByStoreOrder_Id(storeOrderId)
+                .ifPresent(PaymentRefund::markPgRejected);
     }
 
     private Payment findPaymentWithLock(Long orderId) {

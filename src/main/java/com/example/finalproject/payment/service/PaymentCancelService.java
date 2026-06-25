@@ -41,7 +41,7 @@ public class PaymentCancelService {
             log.error("[PG_CANCEL_ERROR] orderId={}, paymentId={}, error={}",
                     orderId, payment.getId(), e.getMessage(), e);
 
-            paymentCommandService.revertRefundRequest(orderId);
+            paymentCommandService.revertRefundRequestAndMarkFailed(orderId, storeOrder.getId());
             throw new BusinessException(ErrorCode.PAYMENT_CANCEL_FAILED);
         }
 

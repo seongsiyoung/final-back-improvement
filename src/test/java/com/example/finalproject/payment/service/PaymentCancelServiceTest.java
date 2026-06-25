@@ -5,6 +5,9 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.util.GeometryUtil;
 import com.example.finalproject.order.domain.Order;
 import com.example.finalproject.order.domain.StoreOrder;
@@ -12,8 +15,11 @@ import com.example.finalproject.order.enums.OrderType;
 import com.example.finalproject.order.repository.OrderRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.domain.Payment;
+import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.RefundStatus;
+import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.service.pg.CancelResult;
 import com.example.finalproject.payment.service.pg.PaymentGateWay;
@@ -49,8 +55,35 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
     private StoreRepository storeRepository;
     @Autowired
     private StoreCategoryRepository storeCategoryRepository;
+    @Autowired
+    private PaymentRefundRepository paymentRefundRepository;
     @MockBean
     private PaymentGateWay paymentGateWay;
+
+    @Test
+    void cancel_whenPgCancelFails_marksRefundAsPgRejected_andRevertsPaymentInSameCommit() {
+        StoreOrder[] storeOrders = createApprovedPaymentWithTwoStoreOrders();
+        StoreOrder storeOrder = storeOrders[0];
+        Payment payment = paymentRepository.findByOrder_Id(storeOrder.getOrder().getId()).orElseThrow();
+        paymentRefundRepository.save(PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrder)
+                .refundAmount(1000)
+                .refundReason("고객 변심")
+                .build());
+
+        when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("PG 타임아웃"));
+
+        assertThatThrownBy(() -> paymentCancelService.cancel(storeOrder, 1000, "고객 변심"))
+                .isInstanceOf(BusinessException.class);
+
+        Payment reloadedPayment = paymentRepository.findById(payment.getId()).orElseThrow();
+        assertThat(reloadedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.APPROVED);
+
+        PaymentRefund reloadedRefund = paymentRefundRepository.findByStoreOrder_Id(storeOrder.getId()).orElseThrow();
+        assertThat(reloadedRefund.getRefundStatus()).isEqualTo(RefundStatus.PG_REJECTED);
+    }
 
     @Test
     void differentStoreOrdersOfSamePayment_useDifferentIdempotencyKeys() {
