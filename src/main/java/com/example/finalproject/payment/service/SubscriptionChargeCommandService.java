@@ -35,7 +35,10 @@ public class SubscriptionChargeCommandService {
         // 다른 트랜잭션에서 로드한 detached 엔티티를 그대로 넘기면, 여기서 lazy 필드
         // (paymentMethod/user/subscriptionProduct)에 접근할 때 LazyInitializationException이
         // 난다. 그래서 엔티티가 아니라 ID를 받아 항상 같은 트랜잭션 안에서 재조회한다.
-        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+        // 비관적 락으로 조회한다 — 같은 구독에 대한 동시 startCharge() 호출이
+        // 이어지는 가드(existsBy...)~저장 구간을 순차적으로 통과하게 만들어
+        // TOCTOU 레이스(코드 리뷰에서 발견)를 좁힌다.
+        Subscription subscription = subscriptionRepository.findWithLockById(subscriptionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SUBSCRIPTION_NOT_FOUND));
 
         LocalDate billingCycleDate = subscription.getNextPaymentDate();

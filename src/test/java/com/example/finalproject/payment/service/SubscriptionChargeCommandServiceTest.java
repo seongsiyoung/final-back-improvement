@@ -59,11 +59,14 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
                 .build());
         approved.approve("already-key-" + System.nanoTime(), "pg-tx", "테스트카드사", "1234-****-****-5678");
         subscriptionPaymentRepository.save(approved);
+        long countBefore = subscriptionPaymentRepository.count();
 
         assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.ALREADY_PROCESSED_PAYMENT));
+
+        assertThat(subscriptionPaymentRepository.count()).isEqualTo(countBefore);
     }
 
     @Test
@@ -76,6 +79,7 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
                 .pgOrderId("SUB-FAILED-" + System.nanoTime())
                 .pgProvider("TOSS")
                 .paymentStatus(PaymentStatus.PENDING)
+                .billingCycleDate(subscription.getNextPaymentDate())
                 .build());
         failed.fail();
         subscriptionPaymentRepository.save(failed);
