@@ -2,6 +2,8 @@ package com.example.finalproject.payment.domain;
 
 
 import com.example.finalproject.global.domain.BaseTimeEntity;
+import com.example.finalproject.global.exception.custom.BusinessException;
+import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
@@ -109,7 +111,7 @@ public class PaymentRefund extends BaseTimeEntity {
 
     public void revertToRequested() {
         if (this.refundStatus != RefundStatus.PG_REJECTED) {
-            throw new IllegalStateException("PG_REJECTED 상태에서만 재시도할 수 있습니다.");
+            throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
         }
         this.refundStatus = RefundStatus.REQUESTED;
     }
