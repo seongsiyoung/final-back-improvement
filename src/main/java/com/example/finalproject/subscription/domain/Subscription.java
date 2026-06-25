@@ -86,6 +86,12 @@ public class Subscription extends BaseTimeEntity {
     @Column(name = "cancel_reason", length = 500)
     private String cancelReason;
 
+    @Column(name = "fail_count", nullable = false)
+    private Integer failCount = 0;
+
+    @Column(name = "next_retry_at")
+    private LocalDateTime nextRetryAt;
+
 
     @Builder
     public Subscription(User user, Store store, SubscriptionProduct subscriptionProduct,
@@ -133,8 +139,10 @@ public class Subscription extends BaseTimeEntity {
      * @param reason 해지 사유 (선택)
      */
     public void requestCancellation(String reason) {
-        if (this.status != SubscriptionStatus.ACTIVE && this.status != SubscriptionStatus.PAUSED) {
-            throw new IllegalStateException("ACTIVE 또는 PAUSED 상태에서만 해지 요청할 수 있습니다.");
+        if (this.status != SubscriptionStatus.ACTIVE
+                && this.status != SubscriptionStatus.PAUSED
+                && this.status != SubscriptionStatus.PAYMENT_FAILED) {
+            throw new IllegalStateException("ACTIVE, PAUSED 또는 PAYMENT_FAILED 상태에서만 해지 요청할 수 있습니다.");
         }
         this.status = SubscriptionStatus.CANCELLATION_PENDING;
         this.cancelReason = reason;
@@ -168,8 +176,21 @@ public class Subscription extends BaseTimeEntity {
         this.status = SubscriptionStatus.ACTIVE;
     }
 
+    private static final int RETRY_BACKOFF_DAYS = 1;
+
     public void markPaymentFailed() {
         this.status = SubscriptionStatus.PAYMENT_FAILED;
+        this.failCount = (this.failCount != null ? this.failCount : 0) + 1;
+        this.nextRetryAt = LocalDateTime.now().plusDays(RETRY_BACKOFF_DAYS);
+    }
+
+    public void resetFailCount() {
+        this.failCount = 0;
+        this.nextRetryAt = null;
+    }
+
+    public boolean isRetryExhausted(int maxRetries) {
+        return this.failCount != null && this.failCount >= maxRetries;
     }
 
     public void moveNextBillingDate() {
