@@ -38,6 +38,18 @@ public class SubscriptionChargeCommandService {
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SUBSCRIPTION_NOT_FOUND));
 
+        LocalDate billingCycleDate = subscription.getNextPaymentDate();
+
+        // 같은 결제주기에 이미 승인된 결제가 있으면 재승인하지 않는다. DB UNIQUE
+        // 제약 대신 애플리케이션 레벨 가드를 쓰는 이유는 design.md "구현 리뷰에서
+        // 확정된 결정" 참고 — nextPaymentDate가 실패 시에는 전진하지 않아 DB
+        // UNIQUE(subscription_id, billing_cycle_date)를 걸면 정상적인 재시도까지
+        // 막아버린다.
+        if (subscriptionPaymentRepository.existsBySubscription_IdAndBillingCycleDateAndPaymentStatus(
+                subscriptionId, billingCycleDate, PaymentStatus.APPROVED)) {
+            throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
+        }
+
         PaymentMethod paymentMethod = subscription.getPaymentMethod();
         String pgOrderId = makePgOrderId(subscription);
 
@@ -49,6 +61,7 @@ public class SubscriptionChargeCommandService {
                         .pgOrderId(pgOrderId)
                         .pgProvider("TOSS")
                         .paymentStatus(PaymentStatus.PENDING)
+                        .billingCycleDate(billingCycleDate)
                         .build());
 
         TossBillingApproveRequest request = TossBillingApproveRequest.builder()
