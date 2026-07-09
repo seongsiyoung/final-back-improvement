@@ -14,9 +14,11 @@ public class SseEmitterRepository {
 
     public void save(Long userId, String emitterId, SseEmitter emitter) {
         emitters.put(emitterId, emitter);
-        userEmitters
-                .computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet())
-                .add(emitterId);
+        userEmitters.compute(userId, (ignored, ids) -> {
+            Set<String> emitterIds = ids == null ? ConcurrentHashMap.newKeySet() : ids;
+            emitterIds.add(emitterId);
+            return emitterIds;
+        });
     }
 
     public SseEmitter get(String emitterId) {
@@ -27,15 +29,15 @@ public class SseEmitterRepository {
         return userEmitters.getOrDefault(userId, Set.of());
     }
 
+    public Set<Long> getUserIds() {
+        return Set.copyOf(userEmitters.keySet());
+    }
+
     public void remove(Long userId, String emitterId) {
         emitters.remove(emitterId);
-
-        Set<String> ids = userEmitters.get(userId);
-        if (ids != null) {
+        userEmitters.computeIfPresent(userId, (ignored, ids) -> {
             ids.remove(emitterId);
-            if (ids.isEmpty()) {
-                userEmitters.remove(userId);
-            }
-        }
+            return ids.isEmpty() ? null : ids;
+        });
     }
 }
