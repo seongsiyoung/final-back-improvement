@@ -4,6 +4,7 @@ import com.example.finalproject.communication.domain.Notification;
 import com.example.finalproject.communication.dto.response.NotificationResponse;
 import com.example.finalproject.communication.enums.NotificationRefType;
 import com.example.finalproject.communication.event.UnreadCountChangedEvent;
+import com.example.finalproject.communication.event.NotificationCreatedEvent;
 import com.example.finalproject.communication.repository.NotificationRepository;
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
@@ -42,9 +43,10 @@ public class NotificationService {
                 .referenceType(refType)
                 .build();
 
-        notificationRepository.save(notification);
+        Notification saved = notificationRepository.save(notification);
 
         int unreadCount = notificationRepository.countByUserIdAndIsReadFalse(userId);
+        eventPublisher.publishEvent(new NotificationCreatedEvent(userId, NotificationResponse.from(saved)));
         eventPublisher.publishEvent(new UnreadCountChangedEvent(userId, unreadCount));
     }
 

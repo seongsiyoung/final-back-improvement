@@ -1,8 +1,7 @@
 package com.example.finalproject.moderation.service.admin.rider;
 
-import com.example.finalproject.communication.domain.Notification;
 import com.example.finalproject.communication.enums.NotificationRefType;
-import com.example.finalproject.communication.repository.NotificationRepository;
+import com.example.finalproject.communication.service.NotificationService;
 import com.example.finalproject.delivery.domain.Rider;
 import com.example.finalproject.delivery.repository.RiderRepository;
 import com.example.finalproject.global.exception.custom.BusinessException;
@@ -43,7 +42,7 @@ public class AdminRiderApprovalService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final UserRoleRepository userRoleRepository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
 
     @Transactional(readOnly = true)
     public List<AdminRiderApprovalListResponse> getRiderApprovals(List<ApprovalStatus> statuses) {
@@ -130,12 +129,12 @@ public class AdminRiderApprovalService {
         rider.approve();
         grantRole(approval.getUser(), "RIDER");
 
-        notificationRepository.save(new Notification(
-                approval.getUser(),
+        notificationService.createNotification(
+                approval.getUser().getId(),
                 "배달원 승인 완료",
                 "배달원 신청이 승인되었습니다.",
                 NotificationRefType.RIDER
-        ));
+        );
     }
 
     public void holdRider(Long approvalId, String adminEmail, String reason) {
@@ -152,12 +151,12 @@ public class AdminRiderApprovalService {
         LocalDateTime heldUntil = LocalDateTime.now().plusDays(HOLD_DAYS);
         approval.hold(admin, reason, heldUntil);
 
-        notificationRepository.save(new Notification(
-                approval.getUser(),
+        notificationService.createNotification(
+                approval.getUser().getId(),
                 "배달원 신청 보류",
                 "배달원 신청이 보류되었습니다. 사유: " + reason,
                 NotificationRefType.RIDER
-        ));
+        );
     }
 
     public void rejectRider(Long approvalId, String adminEmail, String reason) {
@@ -177,12 +176,12 @@ public class AdminRiderApprovalService {
         approval.reject(admin, reason);
         rider.reject();
 
-        notificationRepository.save(new Notification(
-                approval.getUser(),
+        notificationService.createNotification(
+                approval.getUser().getId(),
                 "배달원 신청 거절",
                 "배달원 신청이 거절되었습니다. 사유: " + reason,
                 NotificationRefType.RIDER
-        ));
+        );
     }
 
     private Approval getRiderApprovalForDecision(Long approvalId) {
