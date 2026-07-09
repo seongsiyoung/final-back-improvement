@@ -4,6 +4,7 @@ import com.example.finalproject.communication.dto.response.NotificationResponse;
 import com.example.finalproject.global.sse.enums.SseEventType;
 import com.example.finalproject.global.sse.repository.SseEmitterRepository;
 import java.io.IOException;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,10 @@ public class SseService {
     private final SseEmitterRepository repository;
 
     public SseEmitter subscribe(Long userId) {
+        return register(userId);
+    }
+
+    public SseEmitter register(Long userId) {
         String emitterId = userId + "_" + UUID.randomUUID();
         SseEmitter emitter = new SseEmitter(TIMEOUT);
 
@@ -41,6 +46,18 @@ public class SseService {
         }
 
         return emitter;
+    }
+
+    public void replay(
+            Long userId,
+            SseEmitter emitter,
+            List<NotificationResponse> notifications,
+            int unreadCount) {
+        for (NotificationResponse notification : notifications) {
+            sendToEmitter(userId, emitter, SseEventType.NOTIFICATION_CREATED,
+                    notification, notification.getId().toString());
+        }
+        sendToEmitter(userId, emitter, SseEventType.UNREAD_COUNT, unreadCount, null);
     }
 
     public void send(Long userId, SseEventType eventType, Object data) {
@@ -66,17 +83,27 @@ public class SseService {
             if (emitter == null) {
                 continue;
             }
+            sendToEmitter(userId, emitter, eventType, data, eventId);
+        }
+    }
 
-            try {
+    private void sendToEmitter(
+            Long userId,
+            SseEmitter emitter,
+            SseEventType eventType,
+            Object data,
+            String eventId) {
+        try {
+            synchronized (emitter) {
                 SseEmitter.SseEventBuilder event = SseEmitter.event();
                 if (eventId != null) {
                     event.id(eventId);
                 }
                 event.name(eventType.getEventName()).data(data);
                 emitter.send(event);
-            } catch (IOException e) {
-                repository.remove(userId, emitterId);
             }
+        } catch (IOException e) {
+            repository.remove(userId, emitter);
         }
     }
 }

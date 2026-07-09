@@ -40,4 +40,10 @@ public class SseEmitterRepository {
             return ids.isEmpty() ? null : ids;
         });
     }
+
+    public void remove(Long userId, SseEmitter emitter) {
+        getEmitterIds(userId).stream()
+                .filter(emitterId -> emitters.get(emitterId) == emitter)
+                .forEach(emitterId -> remove(userId, emitterId));
+    }
 }

@@ -68,6 +68,25 @@ class SseServiceTest {
     }
 
     @Test
+    void replay_sendsNotificationsAndUnreadCountOnlyToTheRegisteredEmitter() {
+        SseEmitterRepository repository = new SseEmitterRepository();
+        SseService sseService = new SseService(repository);
+        CapturingSseEmitter replayEmitter = new CapturingSseEmitter();
+        CapturingSseEmitter anotherTabEmitter = new CapturingSseEmitter();
+        repository.save(1L, "replay", replayEmitter);
+        repository.save(1L, "another-tab", anotherTabEmitter);
+        NotificationResponse notification = new NotificationResponse(
+                42L, "새 알림", "내용", NotificationRefType.ORDER, LocalDateTime.of(2026, 8, 22, 15, 0));
+
+        sseService.replay(1L, replayEmitter, List.of(notification), 2);
+
+        assertThat(replayEmitter.sentData).containsExactly(
+                "id:42\nevent:notification-created\ndata:", notification, "\n\n",
+                "event:unread-count\ndata:", 2, "\n\n");
+        assertThat(anotherTabEmitter.sentData).isEmpty();
+    }
+
+    @Test
     void subscribe_usesSameTwentyFourHourTimeoutAsNginx() {
         SseService sseService = new SseService(new SseEmitterRepository());
 
