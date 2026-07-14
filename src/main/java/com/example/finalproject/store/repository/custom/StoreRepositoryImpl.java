@@ -1,96 +1,116 @@
 package com.example.finalproject.store.repository.custom;
 
+import static com.example.finalproject.product.domain.QProduct.product;
+import static com.example.finalproject.store.domain.QStore.store;
+import static com.example.finalproject.store.domain.QStoreBusinessHour.storeBusinessHour;
+
+import com.example.finalproject.global.util.GeometryUtil;
+import com.example.finalproject.store.dto.response.QStoreNearbyResponse;
 import com.example.finalproject.store.dto.response.StoreNearbyResponse;
+import com.example.finalproject.store.enums.StoreActiveStatus;
+import com.example.finalproject.store.enums.StoreStatus;
 import com.example.finalproject.user.dto.request.GetStoreSearchRequest;
+import com.querydsl.core.types.dsl.BooleanExpression;
+import com.querydsl.core.types.dsl.Expressions;
+import com.querydsl.core.types.dsl.NumberTemplate;
+import com.querydsl.jpa.JPAExpressions;
+import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.time.LocalDate;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.locationtech.jts.geom.Point;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 @RequiredArgsConstructor
 public class StoreRepositoryImpl implements StoreRepositoryCustom {
-    private final JdbcTemplate jdbcTemplate;
+    private static final double SEARCH_RADIUS_METERS = 3000.0;
+
+    private final JPAQueryFactory queryFactory;
 
     @Override
     public Slice<StoreNearbyResponse> findNearbyStoresByCategory(GetStoreSearchRequest request) {
-        return findNearbyStoresWithSpatialIndex(request);
-    }
-
-    private Slice<StoreNearbyResponse> findNearbyStoresWithSpatialIndex(GetStoreSearchRequest request) {
+        Point currentLocation = GeometryUtil.createPoint(request.getLongitude(), request.getLatitude());
+        NumberTemplate<Double> distance = Expressions.numberTemplate(
+                Double.class, "st_distance({0}, {1})", store.address.location, currentLocation);
+        NumberTemplate<Double> latitude = Expressions.numberTemplate(
+                Double.class, "ST_Y(ST_GeometryFromText(ST_AsText({0})))", store.address.location);
+        NumberTemplate<Double> longitude = Expressions.numberTemplate(
+                Double.class, "ST_X(ST_GeometryFromText(ST_AsText({0})))", store.address.location);
         short todayDayOfWeek = (short) (LocalDate.now().getDayOfWeek().getValue() % 7);
-        StringBuilder sql = new StringBuilder("""
-                select s.id, s.store_name,
-                       ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance,
-                       coalesce(s.review_count, 0) as review_count, s.store_image,
-                       s.is_active = 'ACTIVE' and s.is_delivery_available = true as is_open,
-                       s.address_line1, s.address_line2,
-                       ST_Y(s.location::geometry) as latitude, ST_X(s.location::geometry) as longitude
-                from stores s
-                where ST_DWithin(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 3000)
-                  and s.status = 'APPROVED'
-                  and s.is_active = 'ACTIVE'
-                  and s.deleted_at is null
-                  and exists (
-                      select 1 from store_business_hours bh
-                      where bh.store_id = s.id and bh.day_of_week = ? and bh.is_closed = false
-                  )
-                """);
-        List<Object> arguments = new java.util.ArrayList<>(List.of(
-                request.getLongitude(), request.getLatitude(), request.getLongitude(), request.getLatitude(), todayDayOfWeek));
-        if (request.getStoreCategoryId() != null) {
-            sql.append(" and s.store_category_id = ?");
-            arguments.add(request.getStoreCategoryId());
-        }
-        if (request.getKeyword() != null && !request.getKeyword().isBlank()) {
-            sql.append("""
-                     and exists (
-                         select 1 from products p
-                         where p.store_id = s.id and p.is_active = true
-                           and lower(p.product_name) like '%' || lower(?) || '%'
-                           escape '!'
-                     )
-                    """);
-            arguments.add(escapeLikeKeyword(request.getKeyword()));
-        }
-        if (request.getLastDistance() != null && request.getLastId() != null) {
-            sql.append("""
-                     and (ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) > ?
-                          or (ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) = ? and s.id > ?))
-                    """);
-            arguments.add(request.getLongitude());
-            arguments.add(request.getLatitude());
-            arguments.add(request.getLastDistance());
-            arguments.add(request.getLongitude());
-            arguments.add(request.getLatitude());
-            arguments.add(request.getLastDistance());
-            arguments.add(request.getLastId());
-        }
-        sql.append(" order by ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography), s.id limit ?");
-        arguments.add(request.getLongitude());
-        arguments.add(request.getLatitude());
-        arguments.add(request.getSize() + 1);
-        List<StoreNearbyResponse> content = jdbcTemplate.query(sql.toString(), (resultSet, rowNum) -> new StoreNearbyResponse(
-                resultSet.getLong("id"), resultSet.getString("store_name"), resultSet.getDouble("distance"),
-                resultSet.getInt("review_count"), resultSet.getString("store_image"), resultSet.getBoolean("is_open"),
-                resultSet.getString("address_line1"), resultSet.getString("address_line2"),
-                resultSet.getDouble("latitude"), resultSet.getDouble("longitude")), arguments.toArray());
+
+        List<StoreNearbyResponse> content = queryFactory.select(new QStoreNearbyResponse(
+                        store.id,
+                        store.storeName,
+                        distance.coalesce(0.0),
+                        store.reviewCount.coalesce(0),
+                        store.storeImage,
+                        store.isActive.eq(StoreActiveStatus.ACTIVE).and(store.isDeliveryAvailable.eq(true)),
+                        store.address.addressLine1,
+                        store.address.addressLine2,
+                        latitude,
+                        longitude))
+                .from(store)
+                .where(
+                        within3km(currentLocation),
+                        isApprovedAndActive(),
+                        notClosedToday(todayDayOfWeek),
+                        storeCategoryEq(request.getStoreCategoryId()),
+                        productKeywordCondition(request.getKeyword()),
+                        cursorCondition(request.getLastDistance(), request.getLastId(), distance))
+                .orderBy(distance.asc(), store.id.asc())
+                .limit(request.getSize() + 1)
+                .fetch();
+
         return checkLastPage(request.getSize(), content);
     }
 
-    private String escapeLikeKeyword(String keyword) {
-        return keyword.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+    private BooleanExpression within3km(Point currentLocation) {
+        return Expressions.booleanTemplate(
+                "st_dwithin({0}, {1}, {2})", store.address.location, currentLocation, SEARCH_RADIUS_METERS);
+    }
+
+    private BooleanExpression isApprovedAndActive() {
+        return store.status.eq(StoreStatus.APPROVED)
+                .and(store.isActive.eq(StoreActiveStatus.ACTIVE))
+                .and(store.deletedAt.isNull());
+    }
+
+    private BooleanExpression notClosedToday(short todayDayOfWeek) {
+        return store.id.in(JPAExpressions.select(storeBusinessHour.store.id)
+                .from(storeBusinessHour)
+                .where(storeBusinessHour.dayOfWeek.eq(todayDayOfWeek), storeBusinessHour.isClosed.eq(false)));
+    }
+
+    private BooleanExpression storeCategoryEq(Long storeCategoryId) {
+        return storeCategoryId == null ? null : store.storeCategory.id.eq(storeCategoryId);
+    }
+
+    private BooleanExpression productKeywordCondition(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
+        }
+        return JPAExpressions.selectOne()
+                .from(product)
+                .where(product.store.id.eq(store.id), product.isActive.isTrue(), product.productName.containsIgnoreCase(keyword))
+                .exists();
+    }
+
+    private BooleanExpression cursorCondition(Double lastDistance, Long lastId, NumberTemplate<Double> distance) {
+        if (lastDistance == null || lastId == null) {
+            return null;
+        }
+        return distance.gt(lastDistance)
+                .or(distance.eq(lastDistance).and(store.id.gt(lastId)));
     }
 
     private Slice<StoreNearbyResponse> checkLastPage(int size, List<StoreNearbyResponse> content) {
-        boolean hasNext = false;
-        if (content.size() > size) {
+        boolean hasNext = content.size() > size;
+        if (hasNext) {
             content.remove(size);
-            hasNext = true;
         }
         return new SliceImpl<>(content, PageRequest.of(0, size), hasNext);
     }
