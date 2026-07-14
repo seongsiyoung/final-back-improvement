@@ -1,190 +1,91 @@
 package com.example.finalproject.store.repository.custom;
 
-import com.example.finalproject.store.dto.response.QStoreNearbyResponse;
 import com.example.finalproject.store.dto.response.StoreNearbyResponse;
-import com.example.finalproject.store.enums.StoreActiveStatus;
-import com.example.finalproject.store.enums.StoreStatus;
-
 import com.example.finalproject.user.dto.request.GetStoreSearchRequest;
-import com.querydsl.core.types.dsl.BooleanExpression;
-import com.querydsl.core.types.dsl.Expressions;
-import com.querydsl.core.types.dsl.NumberTemplate;
-import com.querydsl.jpa.JPAExpressions;
-import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.time.LocalDate;
 import java.util.List;
-import com.example.finalproject.global.util.GeometryUtil;
 import lombok.RequiredArgsConstructor;
-import org.locationtech.jts.geom.Point;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-
-import static com.example.finalproject.product.domain.QProduct.product;
-import static com.example.finalproject.store.domain.QStore.store;
-import static com.example.finalproject.store.domain.QStoreBusinessHour.storeBusinessHour;
 
 @Repository
 @RequiredArgsConstructor
 public class StoreRepositoryImpl implements StoreRepositoryCustom {
-    private final JPAQueryFactory queryFactory;
-    private static final double SEARCH_RADIUS = 3000.0;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public Slice<StoreNearbyResponse> findNearbyStoresByCategory(GetStoreSearchRequest request) {
-        Point currentLocation = GeometryUtil.createPoint(request.getLongitude(), request.getLatitude());
+        return findNearbyStoresWithSpatialIndex(request);
+    }
 
-        // 1. 거리 계산 쿼리
-        NumberTemplate<Double> distanceExpr = Expressions.numberTemplate(
-                Double.class,
-                "ST_Distance({0}, {1})",
-                store.address.location,
-                currentLocation
-        );
-
-        NumberTemplate<Double> latitudeExpr = Expressions.numberTemplate(
-                Double.class,
-                "ST_Y(ST_GeometryFromText(ST_AsText({0})))",
-                store.address.location
-        );
-
-        NumberTemplate<Double> longitudeExpr = Expressions.numberTemplate(
-                Double.class,
-                "ST_X(ST_GeometryFromText(ST_AsText({0})))",
-                store.address.location
-        );
-
-        // 오늘 요일 (0=일요일, 1=월, ..., 6=토) - 휴무일 매장 제외용
+    private Slice<StoreNearbyResponse> findNearbyStoresWithSpatialIndex(GetStoreSearchRequest request) {
         short todayDayOfWeek = (short) (LocalDate.now().getDayOfWeek().getValue() % 7);
-
-        List<StoreNearbyResponse> content = queryFactory
-                .select(new QStoreNearbyResponse(
-                        store.id,
-                        store.storeName,
-                        distanceExpr.coalesce(0.0),
-                        store.reviewCount.coalesce(0),
-                        store.storeImage,
-                        store.isActive.eq(StoreActiveStatus.ACTIVE).and(store.isDeliveryAvailable.eq(true)),
-                        store.address.addressLine1,
-                        store.address.addressLine2,
-                        latitudeExpr,
-                        longitudeExpr
-                ))
-                .from(store)
-                .where(
-                        within3km(currentLocation),
-                        isApprovedAndActive(),
-                        notClosedToday(todayDayOfWeek),                    // 휴무일이 아닌 매장만 (오늘 영업)
-                        storeCategoryEq(request.getStoreCategoryId()),    // 마트 카테고리 조건 (직접 필터링)
-                        productKeywordCond(request.getKeyword()),         // 상품 키워드 조건 (EXISTS 서브쿼리)
-                        cursorCondition(request.getLastDistance(), request.getLastId(), distanceExpr)
-                )
-                .orderBy(distanceExpr.asc(), store.id.asc())
-                .limit(request.getSize() + 1)
-                .fetch();
-
+        StringBuilder sql = new StringBuilder("""
+                select s.id, s.store_name,
+                       ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance,
+                       coalesce(s.review_count, 0) as review_count, s.store_image,
+                       s.is_active = 'ACTIVE' and s.is_delivery_available = true as is_open,
+                       s.address_line1, s.address_line2,
+                       ST_Y(s.location::geometry) as latitude, ST_X(s.location::geometry) as longitude
+                from stores s
+                where ST_DWithin(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 3000)
+                  and s.status = 'APPROVED'
+                  and s.is_active = 'ACTIVE'
+                  and s.deleted_at is null
+                  and exists (
+                      select 1 from store_business_hours bh
+                      where bh.store_id = s.id and bh.day_of_week = ? and bh.is_closed = false
+                  )
+                """);
+        List<Object> arguments = new java.util.ArrayList<>(List.of(
+                request.getLongitude(), request.getLatitude(), request.getLongitude(), request.getLatitude(), todayDayOfWeek));
+        if (request.getStoreCategoryId() != null) {
+            sql.append(" and s.store_category_id = ?");
+            arguments.add(request.getStoreCategoryId());
+        }
+        if (request.getKeyword() != null && !request.getKeyword().isBlank()) {
+            sql.append("""
+                     and exists (
+                         select 1 from products p
+                         where p.store_id = s.id and p.is_active = true
+                           and lower(p.product_name) like '%' || lower(?) || '%'
+                           escape '!'
+                     )
+                    """);
+            arguments.add(escapeLikeKeyword(request.getKeyword()));
+        }
+        if (request.getLastDistance() != null && request.getLastId() != null) {
+            sql.append("""
+                     and (ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) > ?
+                          or (ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) = ? and s.id > ?))
+                    """);
+            arguments.add(request.getLongitude());
+            arguments.add(request.getLatitude());
+            arguments.add(request.getLastDistance());
+            arguments.add(request.getLongitude());
+            arguments.add(request.getLatitude());
+            arguments.add(request.getLastDistance());
+            arguments.add(request.getLastId());
+        }
+        sql.append(" order by ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography), s.id limit ?");
+        arguments.add(request.getLongitude());
+        arguments.add(request.getLatitude());
+        arguments.add(request.getSize() + 1);
+        List<StoreNearbyResponse> content = jdbcTemplate.query(sql.toString(), (resultSet, rowNum) -> new StoreNearbyResponse(
+                resultSet.getLong("id"), resultSet.getString("store_name"), resultSet.getDouble("distance"),
+                resultSet.getInt("review_count"), resultSet.getString("store_image"), resultSet.getBoolean("is_open"),
+                resultSet.getString("address_line1"), resultSet.getString("address_line2"),
+                resultSet.getDouble("latitude"), resultSet.getDouble("longitude")), arguments.toArray());
         return checkLastPage(request.getSize(), content);
     }
 
-    /**
-     * 마트 카테고리 필터 조건 (Store 엔티티 직접 참조)
-     */
-    private BooleanExpression storeCategoryEq(Long storeCategoryId) {
-        return storeCategoryId != null ? store.storeCategory.id.eq(storeCategoryId) : null;
+    private String escapeLikeKeyword(String keyword) {
+        return keyword.replace("!", "!!").replace("%", "!%").replace("_", "!_");
     }
 
-    /**
-     * 상품 키워드 검색 조건 (해당 키워드의 상품을 하나라도 가지고 있는 마트인지 확인)
-     */
-    private BooleanExpression productKeywordCond(String keyword) {
-        if (keyword == null || keyword.isBlank()) {
-            return null;
-        }
-
-        return JPAExpressions
-                .selectOne()
-                .from(product)
-                .where(
-                        product.store.id.eq(store.id),
-                        product.isActive.isTrue(),
-                        product.productName.containsIgnoreCase(keyword)
-                ).exists();
-    }
-
-    /**
-     * 1. 반경 3km 필터 조건 (is true 구문 유지로 Hibernate 6 에러 방지)
-     */
-    private BooleanExpression within3km(Point currentLocation) {
-        return Expressions.booleanTemplate(
-                "ST_DWithin({0}, {1}, {2}) is true",
-                store.address.location, currentLocation, SEARCH_RADIUS
-        );
-    }
-
-    /**
-     * 2. 승인됨, 영업중, 삭제되지 않음 기본 상태 필터
-     */
-    private BooleanExpression isApprovedAndActive() {
-        return store.status.eq(StoreStatus.APPROVED)
-                .and(store.isActive.eq(StoreActiveStatus.ACTIVE))
-                .and(store.deletedAt.isNull());
-    }
-
-    /**
-     * 오늘 휴무가 아닌 매장만 (해당 요일에 isClosed=false인 영업시간이 있는 매장)
-     */
-    private BooleanExpression notClosedToday(short todayDayOfWeek) {
-        return store.id.in(
-                JPAExpressions.select(storeBusinessHour.store.id)
-                        .from(storeBusinessHour)
-                        .where(
-                                storeBusinessHour.dayOfWeek.eq(todayDayOfWeek),
-                                storeBusinessHour.isClosed.eq(false)
-                        )
-        );
-    }
-
-    /**
-     * 3. 상품 조건 필터
-     */
-    private BooleanExpression productSearchCond(Long categoryId, String keyword) {
-        if (categoryId == null && (keyword == null || keyword.isBlank())) {
-            return null;
-        }
-
-        return JPAExpressions
-                .selectOne()
-                .from(product)
-                .where(
-                        product.store.id.eq(store.id), // 마트와 연관관계
-                        product.isActive.isTrue(),
-                        categoryIdEq(categoryId),
-                        productNameContains(keyword)
-                ).exists();
-    }
-
-    private BooleanExpression categoryIdEq(Long categoryId) {
-        return categoryId != null ? product.productCategory.id.eq(categoryId) : null;
-    }
-
-    private BooleanExpression productNameContains(String keyword) {
-        return (keyword != null && !keyword.isBlank()) ? product.productName.containsIgnoreCase(keyword) : null;
-    }
-
-    /**
-     * 4. No-Offset 무한 스크롤 페이징을 위한 커서 조건
-     */
-    private BooleanExpression cursorCondition(Double lastDistance, Long lastId, NumberTemplate<Double> distanceExpr) {
-        if (lastDistance == null || lastId == null) return null;
-
-        return distanceExpr.gt(lastDistance)
-                .or(distanceExpr.eq(lastDistance).and(store.id.gt(lastId)));
-    }
-
-    /**
-     * 5. 다음 페이지 존재 여부 판단 및 Slice 생성
-     */
     private Slice<StoreNearbyResponse> checkLastPage(int size, List<StoreNearbyResponse> content) {
         boolean hasNext = false;
         if (content.size() > size) {
