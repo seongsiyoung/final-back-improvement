@@ -100,6 +100,9 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test') {
     useJUnitPlatform()
+    systemProperty 'runSearchIndexMeasurement', System.getProperty('runSearchIndexMeasurement', 'false')
+    systemProperty 'searchIndexMeasurementStoreCount', System.getProperty(
+            'searchIndexMeasurementStoreCount', '2000,5000,50000,100000')
 }
 
 jar {
