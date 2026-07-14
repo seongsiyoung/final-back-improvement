@@ -49,7 +49,7 @@ class SearchIndexDataSeederTest extends IntegrationTestSupport {
     }
 
     @Test
-    void seed_replacesPreviousDatasetAndDistributesKeywordAcrossBothSpatialBuckets() {
+    void seed_replacesPreviousDatasetAndKeepsTheLocalCandidatePoolRealistic() {
         SearchIndexDataSeeder.Dataset dataset = seeder.seed(2_000);
         SearchIndexDataSeeder.Dataset replacedDataset = seeder.seed(5_000);
 
@@ -58,8 +58,9 @@ class SearchIndexDataSeederTest extends IntegrationTestSupport {
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stores where store_name like 'search-index-store-%'", Integer.class))
                 .isEqualTo(5_000);
-        assertThat(countStoresWithinRadius(replacedDataset)).isEqualTo(3_000);
-        assertThat(countStoresOutsideRadius(replacedDataset)).isEqualTo(2_000);
+        assertThat(countStoresWithinRadius(replacedDataset)).isBetween(50, 150);
+        assertThat(countStoresOutsideRadius(replacedDataset)).isBetween(4_850, 4_950);
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stores where location is null", Integer.class)).isZero();
         assertThat(countKeywordProductsWithinRadius(replacedDataset)).isGreaterThan(0);
         assertThat(countKeywordProductsOutsideRadius(replacedDataset)).isGreaterThan(0);
         assertThat(dataset.keyword()).isEqualTo(replacedDataset.keyword());
@@ -67,14 +68,14 @@ class SearchIndexDataSeederTest extends IntegrationTestSupport {
 
     @ParameterizedTest
     @ValueSource(ints = {50_000, 100_000})
-    void seed_citywideProfileDistributesKeywordCandidatesAcrossBothSpatialBuckets(int storeCount) {
-        SearchIndexDataSeeder.Dataset dataset = seeder.seed(storeCount, SearchIndexDataSeeder.Profile.CITYWIDE);
+    void seed_nationwideProfileDistributesKeywordCandidatesAcrossBothSpatialBuckets(int storeCount) {
+        SearchIndexDataSeeder.Dataset dataset = seeder.seed(storeCount, SearchIndexDataSeeder.Profile.NATIONWIDE_NORMAL);
 
         int storesWithinRadius = countStoresWithinRadius(dataset);
         int storesOutsideRadius = countStoresOutsideRadius(dataset);
 
-        assertThat(storesWithinRadius).isBetween(storeCount * 4 / 100, storeCount * 6 / 100);
-        assertThat(storesOutsideRadius).isBetween(storeCount * 94 / 100, storeCount * 96 / 100);
+        assertThat(storesWithinRadius).isBetween(storeCount / 100, storeCount * 3 / 100);
+        assertThat(storesOutsideRadius).isBetween(storeCount * 97 / 100, storeCount * 99 / 100);
         assertThat(countProductsByKeyword(dataset, "희소검색어")).isEqualTo(storeCount * 2 / 100);
         assertThat(countProductsByKeyword(dataset, "일반검색어")).isEqualTo(storeCount * 20 / 100);
         assertThat(countProductsByKeywordAndSpatialPredicate(dataset, "희소검색어", true))
@@ -88,12 +89,20 @@ class SearchIndexDataSeederTest extends IntegrationTestSupport {
     }
 
     @Test
-    void seed_denseProfileCreatesTwoCharacterKeywordCandidatesForTheFirstPage() {
-        SearchIndexDataSeeder.Dataset dataset = seeder.seed(50_000, SearchIndexDataSeeder.Profile.BROAD);
+    void seed_nationwideProfileCreatesTwoCharacterKeywordCandidatesForTheFirstPage() {
+        SearchIndexDataSeeder.Dataset dataset = seeder.seed(50_000, SearchIndexDataSeeder.Profile.NATIONWIDE_NORMAL);
 
         assertThat(countProductsByKeyword(dataset, dataset.shortKeyword())).isBetween(9_000, 11_000);
         assertThat(countProductsByKeywordAndSpatialPredicate(dataset, dataset.shortKeyword(), true)).isGreaterThanOrEqualTo(11);
         assertThat(countProductsByKeywordAndSpatialPredicate(dataset, dataset.shortKeyword(), false)).isGreaterThan(0);
+    }
+
+    @Test
+    void seed_nationwideDenseProfileKeepsTheCommercialCenterBelowTwoThousandTwoHundredStores() {
+        SearchIndexDataSeeder.Dataset dataset = seeder.seed(100_000, SearchIndexDataSeeder.Profile.NATIONWIDE_DENSE);
+
+        assertThat(countStoresWithinRadius(dataset)).isBetween(1_800, 2_200);
+        assertThat(countStoresOutsideRadius(dataset)).isBetween(97_800, 98_200);
     }
 
     private int countStoresWithinRadius(SearchIndexDataSeeder.Dataset dataset) {
