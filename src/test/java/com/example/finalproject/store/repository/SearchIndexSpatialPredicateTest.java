@@ -27,7 +27,7 @@ class SearchIndexSpatialPredicateTest extends IntegrationTestSupport {
 
     @Test
     void bareSpatialPredicate_preservesFirstPageResultsAndUsesGist() {
-        SearchIndexDataSeeder.Dataset dataset = seeder.seed(50_000, SearchIndexDataSeeder.Profile.CITYWIDE);
+        SearchIndexDataSeeder.Dataset dataset = seeder.seed(100_000, SearchIndexDataSeeder.Profile.NATIONWIDE_NORMAL);
         Object[] arguments = {dataset.centerLongitude(), dataset.centerLatitude(), dataset.centerLongitude(),
                 dataset.centerLatitude(), dataset.todayDayOfWeek(), dataset.centerLongitude(), dataset.centerLatitude()};
 
