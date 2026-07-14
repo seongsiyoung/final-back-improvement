@@ -35,7 +35,7 @@ public class StoreRepositoryImpl implements StoreRepositoryCustom {
     public Slice<StoreNearbyResponse> findNearbyStoresByCategory(GetStoreSearchRequest request) {
         Point currentLocation = GeometryUtil.createPoint(request.getLongitude(), request.getLatitude());
         NumberTemplate<Double> distance = Expressions.numberTemplate(
-                Double.class, "st_distance({0}, {1})", store.address.location, currentLocation);
+                Double.class, "st_distance_geography({0}, {1})", store.address.location, currentLocation);
         NumberTemplate<Double> latitude = Expressions.numberTemplate(
                 Double.class, "ST_Y(ST_GeometryFromText(ST_AsText({0})))", store.address.location);
         NumberTemplate<Double> longitude = Expressions.numberTemplate(
@@ -70,7 +70,7 @@ public class StoreRepositoryImpl implements StoreRepositoryCustom {
 
     private BooleanExpression within3km(Point currentLocation) {
         return Expressions.booleanTemplate(
-                "st_dwithin({0}, {1}, {2})", store.address.location, currentLocation, SEARCH_RADIUS_METERS);
+                "st_dwithin_geography({0}, {1}, {2})", store.address.location, currentLocation, SEARCH_RADIUS_METERS);
     }
 
     private BooleanExpression isApprovedAndActive() {

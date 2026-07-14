@@ -1,15 +1,21 @@
 package com.example.finalproject.store.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.example.finalproject.store.domain.QStore.store;
 
+import com.example.finalproject.global.util.GeometryUtil;
 import com.example.finalproject.store.dto.response.StoreNearbyResponse;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.SearchIndexDataSeeder;
 import com.example.finalproject.testsupport.SqlCaptureInspector;
 import com.example.finalproject.user.dto.request.GetStoreSearchRequest;
+import com.querydsl.core.types.dsl.Expressions;
+import com.querydsl.core.types.dsl.NumberTemplate;
+import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import org.locationtech.jts.geom.Point;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
@@ -29,6 +35,29 @@ class StoreRepositoryQuerydslSpatialSearchTest extends IntegrationTestSupport {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private JPAQueryFactory queryFactory;
+
+    @Test
+    void geographyFunctionAliases_renderPostgisGeographyFunctions() {
+        SearchIndexDataSeeder.Dataset dataset = seeder.seed(2_000, SearchIndexDataSeeder.Profile.BROAD);
+        Point point = GeometryUtil.createPoint(dataset.centerLongitude(), dataset.centerLatitude());
+        NumberTemplate<Double> distance = Expressions.numberTemplate(
+                Double.class, "st_distance_geography({0}, {1})", store.address.location, point);
+
+        SqlCaptureInspector.clear();
+        List<Long> ids = queryFactory.select(store.id)
+                .from(store)
+                .where(Expressions.booleanTemplate(
+                        "st_dwithin_geography({0}, {1}, {2})", store.address.location, point, 3000.0))
+                .orderBy(distance.asc(), store.id.asc())
+                .limit(1)
+                .fetch();
+
+        assertThat(ids).isNotEmpty();
+        assertGeographySpatialFunctions(SqlCaptureInspector.capturedSql());
+    }
 
     @Test
     void querydslSpatialSearch_usesGeographyMetersAndMatchesNativeSearch() {

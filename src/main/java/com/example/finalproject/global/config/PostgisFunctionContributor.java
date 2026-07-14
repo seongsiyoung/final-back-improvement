@@ -12,11 +12,11 @@ public class PostgisFunctionContributor implements FunctionContributor {
         var typeRegistry = functionContributions.getTypeConfiguration().getBasicTypeRegistry();
 
         functionRegistry.registerPattern(
-                "st_dwithin",
+                "st_dwithin_geography",
                 "st_dwithin(?1, cast(?2 as geography), ?3)",
                 typeRegistry.resolve(StandardBasicTypes.BOOLEAN));
         functionRegistry.registerPattern(
-                "st_distance",
+                "st_distance_geography",
                 "st_distance(?1, cast(?2 as geography))",
                 typeRegistry.resolve(StandardBasicTypes.DOUBLE));
     }

@@ -2,8 +2,10 @@ package com.example.finalproject.store.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.finalproject.store.dto.response.StoreNearbyResponse;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.SearchIndexDataSeeder;
+import com.example.finalproject.testsupport.SqlCaptureInspector;
 import com.example.finalproject.user.dto.request.GetStoreSearchRequest;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -15,9 +17,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Slice;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.TestPropertySource;
 
 @EnabledIfSystemProperty(named = "runSearchIndexMeasurement", matches = "true")
+@TestPropertySource(properties = "spring.jpa.properties.hibernate.session_factory.statement_inspector=com.example.finalproject.testsupport.SqlCaptureInspector")
 class SearchIndexScenarioMeasurementTest extends IntegrationTestSupport {
 
     private static final String GIST_INDEX = "idx_stores_location_gist";
@@ -37,17 +42,21 @@ class SearchIndexScenarioMeasurementTest extends IntegrationTestSupport {
     @MethodSource("scenarioAndStoreCounts")
     void recordsPlanForEachActualSearchScenario(Scenario scenario, int storeCount) {
         SearchIndexDataSeeder.Dataset dataset = seeder.seed(storeCount, scenario.profile());
-        String sql = searchSql(scenario.hasKeyword());
-        Object[] arguments = arguments(dataset, scenario);
+        GetStoreSearchRequest request = GetStoreSearchRequest.builder()
+                .latitude(dataset.centerLatitude())
+                .longitude(dataset.centerLongitude())
+                .keyword(keyword(dataset, scenario))
+                .size(10)
+                .build();
+        SqlCaptureInspector.clear();
+        Slice<StoreNearbyResponse> repositoryPage = storeRepository.findNearbyStoresByCategory(request);
+        String sql = capturedSpatialSql();
+        Object[] arguments = querydslArguments(dataset, scenario);
         assertThat(jdbcTemplate.query(sql, (resultSet, rowNum) -> resultSet.getLong("id"), arguments).stream()
                 .limit(10).toList())
-                .isEqualTo(storeRepository.findNearbyStoresByCategory(GetStoreSearchRequest.builder()
-                        .latitude(dataset.centerLatitude())
-                        .longitude(dataset.centerLongitude())
-                        .keyword(keyword(dataset, scenario))
-                        .size(10)
-                        .build())
-                        .getContent().stream().map(store -> store.getStoreId()).toList());
+                .isEqualTo(repositoryPage.getContent().stream()
+                        .map(StoreNearbyResponse::getStoreId)
+                        .toList());
         Map<IndexCombination, List<Long>> resultIdsByCombination = new EnumMap<>(IndexCombination.class);
         Map<IndexCombination, List<Measurement>> measurementsByCombination = new EnumMap<>(IndexCombination.class);
 
@@ -81,45 +90,24 @@ class SearchIndexScenarioMeasurementTest extends IntegrationTestSupport {
         });
     }
 
-    private String searchSql(boolean hasKeyword) {
-        return """
-                select s.id, s.store_name,
-                       ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography),
-                       coalesce(s.review_count, 0), s.store_image,
-                       s.is_active = 'ACTIVE' and s.is_delivery_available = true,
-                       s.address_line1, s.address_line2,
-                       ST_Y(ST_GeometryFromText(ST_AsText(s.location))),
-                       ST_X(ST_GeometryFromText(ST_AsText(s.location)))
-                from stores s
-                where ST_DWithin(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 3000)
-                  and s.status = 'APPROVED'
-                  and s.is_active = 'ACTIVE'
-                  and s.deleted_at is null
-                  and exists (
-                      select 1 from store_business_hours bh
-                      where bh.store_id = s.id and bh.day_of_week = ? and bh.is_closed = false
-                  )
-                %s
-                order by ST_Distance(s.location, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography), s.id
-                limit 11
-                """.formatted(hasKeyword ? """
-                        and exists (
-                            select 1 from products p
-                            where p.store_id = s.id and p.is_active = true
-                              and lower(p.product_name) like '%' || lower(?) || '%'
-                        )
-                        """ : "");
+    private String capturedSpatialSql() {
+        return SqlCaptureInspector.capturedSql().stream()
+                .filter(sql -> sql.toLowerCase().contains("st_dwithin"))
+                .findFirst()
+                .orElseThrow();
     }
 
-    private Object[] arguments(SearchIndexDataSeeder.Dataset dataset, Scenario scenario) {
+    private Object[] querydslArguments(SearchIndexDataSeeder.Dataset dataset, Scenario scenario) {
+        String point = "SRID=4326;POINT(" + dataset.centerLongitude() + " " + dataset.centerLatitude() + ")";
         List<Object> arguments = new ArrayList<>(List.of(
-                dataset.centerLongitude(), dataset.centerLatitude(), dataset.centerLongitude(), dataset.centerLatitude(),
-                dataset.todayDayOfWeek()));
+                point, 0.0, 0, "ACTIVE", true, point, 3000.0, "APPROVED", "ACTIVE",
+                dataset.todayDayOfWeek(), false));
         if (scenario.hasKeyword()) {
-            arguments.add(keyword(dataset, scenario));
+            arguments.add(true);
+            arguments.add("%" + keyword(dataset, scenario) + "%");
         }
-        arguments.add(dataset.centerLongitude());
-        arguments.add(dataset.centerLatitude());
+        arguments.add(point);
+        arguments.add(11);
         return arguments.toArray();
     }
 
