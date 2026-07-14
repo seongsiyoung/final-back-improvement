@@ -13,26 +13,32 @@ public class SearchIndexDataSeeder {
     private static final String USER_EMAIL_PREFIX = "search-index-owner-";
     private static final String USER_EMAIL_SUFFIX = "@test.local";
     private static final String PRODUCT_PREFIX = "search-index-";
-    private static final String KEYWORD = "포폴매칭";
+    private static final String KEYWORD = "일반검색어";
+    private static final String SPECIFIC_KEYWORD = "희소검색어";
+    private static final String SHORT_KEYWORD = "두글";
     private static final double CENTER_LONGITUDE = 127.0276;
     private static final double CENTER_LATITUDE = 37.4979;
 
     private final JdbcTemplate jdbcTemplate;
 
     public Dataset seed(int storeCount) {
+        return seed(storeCount, Profile.BROAD);
+    }
+
+    public Dataset seed(int storeCount, Profile profile) {
         short todayDayOfWeek = (short) (LocalDate.now().getDayOfWeek().getValue() % 7);
         clearPreviousDataset();
 
         Long storeCategoryId = findOrCreateStoreCategory();
         Long productCategoryId = findOrCreateProductCategory();
         insertUsers(storeCount);
-        insertStores(storeCount, storeCategoryId);
-        insertProducts(productCategoryId);
+        insertStores(storeCount, storeCategoryId, profile);
+        insertProducts(productCategoryId, profile);
         insertBusinessHours(todayDayOfWeek);
         jdbcTemplate.execute("ANALYZE users; ANALYZE stores; ANALYZE products; ANALYZE store_business_hours");
 
         return new Dataset(storeCategoryId, productCategoryId, CENTER_LONGITUDE, CENTER_LATITUDE,
-                KEYWORD, todayDayOfWeek);
+                KEYWORD, SPECIFIC_KEYWORD, SHORT_KEYWORD, todayDayOfWeek);
     }
 
     private void clearPreviousDataset() {
@@ -81,7 +87,11 @@ public class SearchIndexDataSeeder {
                 """, USER_EMAIL_PREFIX, USER_EMAIL_SUFFIX, storeCount);
     }
 
-    private void insertStores(int storeCount, Long storeCategoryId) {
+    private void insertStores(int storeCount, Long storeCategoryId, Profile profile) {
+        if (profile == Profile.CITYWIDE) {
+            insertCitywideStores(storeCount, storeCategoryId);
+            return;
+        }
         jdbcTemplate.update("""
                 insert into stores (created_at, updated_at, owner_id, store_category_id, store_name,
                                     representative_name, representative_phone, business_owner_name,
@@ -96,31 +106,60 @@ public class SearchIndexDataSeeder {
                        'search-index-report-' || row_number() over (order by u.id),
                        '06134', '검색 인덱스 주소',
                        ST_SetSRID(ST_MakePoint(
-                           ? + case when row_number() over (order by u.id) % 5 < 3
-                                    then (row_number() over (order by u.id) % 100) * 0.0001
-                                    else 0.05 + (row_number() over (order by u.id) % 100) * 0.0001 end,
-                           ?), 4326)::geography,
+                           ? + case when row_number() over (order by u.id) % ? < ?
+                                    then ((row_number() over (order by u.id) * 53 % 101) - 50) * 0.0002
+                                    else 0.05 + ((row_number() over (order by u.id) * 53 % 101) - 50) * 0.0002 end,
+                           ? + ((row_number() over (order by u.id) * 97 % 101) - 50) * 0.0002), 4326)::geography,
                        '검색은행', '110-000-000000', '검색 인덱스 대표자',
                        0, 'APPROVED', true, 'ACTIVE', 5.00
                 from users u
                 where u.email like ? || '%' || ?
                 order by u.id
                 limit ?
-                """, storeCategoryId, STORE_PREFIX, CENTER_LONGITUDE, CENTER_LATITUDE,
+                """, storeCategoryId, STORE_PREFIX, CENTER_LONGITUDE, profile.spatialModulo(), profile.nearbyRows(), CENTER_LATITUDE,
                 USER_EMAIL_PREFIX, USER_EMAIL_SUFFIX, storeCount);
     }
 
-    private void insertProducts(Long productCategoryId) {
+    private void insertCitywideStores(int storeCount, Long storeCategoryId) {
+        jdbcTemplate.update("""
+                with numbered_users as (
+                    select id, row_number() over (order by id) as row_number
+                    from users
+                    where email like ? || '%' || ?
+                    limit ?
+                )
+                insert into stores (created_at, updated_at, owner_id, store_category_id, store_name,
+                                    representative_name, representative_phone, business_owner_name,
+                                    business_number, telecom_sales_report_number, postal_code, address_line1,
+                                    location, settlement_bank_name, settlement_bank_account,
+                                    settlement_account_holder, review_count, status, is_delivery_available,
+                                    is_active, commission_rate)
+                select now(), now(), id, ?, ? || row_number,
+                       '검색 인덱스 대표자', '01000000000', '검색 인덱스 대표자',
+                       lpad(row_number::text, 12, '0'), 'search-index-report-' || row_number,
+                       '06134', '검색 인덱스 주소',
+                       ST_SetSRID(ST_MakePoint(
+                           ? + (((row_number - 1) % 100) / 99.0 - 0.5) * 0.34,
+                           ? + (((row_number - 1) / 100)::double precision
+                                / (ceil(? / 100.0) - 1) - 0.5) * 0.18), 4326)::geography,
+                       '검색은행', '110-000-000000', '검색 인덱스 대표자',
+                       0, 'APPROVED', true, 'ACTIVE', 5.00
+                from numbered_users
+                order by id
+                """, USER_EMAIL_PREFIX, USER_EMAIL_SUFFIX, storeCount, storeCategoryId, STORE_PREFIX,
+                CENTER_LONGITUDE, CENTER_LATITUDE, storeCount);
+    }
+
+    private void insertProducts(Long productCategoryId, Profile profile) {
         jdbcTemplate.update("""
                 insert into products (created_at, updated_at, store_id, category_id, product_name,
                                       price, stock, is_active, order_count)
                 select now(), now(), s.id, ?,
-                       ? || case when row_number() over (order by s.id) % 10 in (0, 4)
-                                then ? else '포폴비매칭' end || '-' || row_number() over (order by s.id),
+                       ? || %s || '-' || row_number() over (order by s.id),
                        1000, 100, true, 0
                 from stores s
                 where s.store_name like ?
-                """, productCategoryId, PRODUCT_PREFIX, KEYWORD, STORE_PREFIX + "%");
+                """.formatted(profile.keywordExpression()), productCategoryId, PRODUCT_PREFIX, STORE_PREFIX + "%");
     }
 
     private void insertBusinessHours(short todayDayOfWeek) {
@@ -134,6 +173,37 @@ public class SearchIndexDataSeeder {
     }
 
     public record Dataset(Long storeCategoryId, Long productCategoryId, double centerLongitude,
-                          double centerLatitude, String keyword, short todayDayOfWeek) {
+                          double centerLatitude, String keyword, String specificKeyword, String shortKeyword,
+                          short todayDayOfWeek) {
+    }
+
+    public enum Profile {
+        BROAD(5, 3, "case when ((row_number() over (order by s.id) * 7919 + 17) % 10000) < 2000 "
+                + "then '일반검색어 두글' else '검색비매칭' end"),
+        CITYWIDE(0, 0, "case when ((row_number() over (order by s.id) * 7919 + 17) % 10000) < 200 "
+                + "then '일반검색어 희소검색어' when ((row_number() over (order by s.id) * 7919 + 17) % 10000) < 2000 "
+                + "then '일반검색어' else '검색비매칭' end");
+
+        private final int spatialModulo;
+        private final int nearbyRows;
+        private final String keywordExpression;
+
+        Profile(int spatialModulo, int nearbyRows, String keywordExpression) {
+            this.spatialModulo = spatialModulo;
+            this.nearbyRows = nearbyRows;
+            this.keywordExpression = keywordExpression;
+        }
+
+        int spatialModulo() {
+            return spatialModulo;
+        }
+
+        int nearbyRows() {
+            return nearbyRows;
+        }
+
+        String keywordExpression() {
+            return keywordExpression;
+        }
     }
 }
