@@ -98,8 +98,20 @@ public class Payment extends BaseTimeEntity {
         this.paidAt = LocalDateTime.now();
     }
 
+    public void markPending() {
+        if (this.paymentStatus != PaymentStatus.READY) {
+            throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
+        }
+
+        this.paymentStatus = PaymentStatus.PENDING;
+    }
+
     public void fail() {
         this.paymentStatus = PaymentStatus.FAILED;
+    }
+
+    public void revertToReady() {
+        this.paymentStatus = PaymentStatus.READY;
     }
 
     public void Refunded() {

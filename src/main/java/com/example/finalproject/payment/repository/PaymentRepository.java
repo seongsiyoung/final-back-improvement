@@ -44,5 +44,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     );
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Payment> findWithLockById(Long paymentId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Payment> findWithLockByOrder_Id(Long orderId);
 }
