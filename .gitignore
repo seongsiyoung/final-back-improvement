@@ -53,7 +53,6 @@ src/main/java/com/example/finalproject/forLocal/
 ### Generated sources ###
 src/main/generated/*
 
-/src/test/
 **/claude.md
 .claude
 .agents/
@@ -71,3 +70,6 @@ GEMINI.md
 CLAUDE.md
 .serena/
 ERD
+
+k6/
+docker/image/

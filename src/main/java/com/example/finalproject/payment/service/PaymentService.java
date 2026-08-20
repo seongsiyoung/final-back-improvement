@@ -27,6 +27,7 @@ import com.example.finalproject.user.domain.User;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -239,7 +240,7 @@ public class PaymentService {
     }
 
     private String generateOrderNumber() {
-        return "ORD-" + System.currentTimeMillis();
+        return "ORD-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
     private String generatePgOrderId(Order order) {
