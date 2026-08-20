@@ -147,13 +147,15 @@ public class SubscriptionService {
         Subscription subscription = subscriptionCreationService.createPendingSubscription(request, userId, user);
 
         try {
-            subscriptionBillingService.chargeMonthlyFee(subscription);
-            subscriptionStatusService.activateAfterFirstPayment(subscription.getId());
-
+            subscriptionBillingService.chargeMonthlyFee(subscription.getId());
         } catch (Exception e) {
             subscriptionStatusService.markPaymentFailed(subscription.getId());
             throw new BusinessException(ErrorCode.PAYMENT_FAILED);
         }
+
+        // 결제는 이미 성공했다. 이후 활성화 반영이 실패해도 결제 실패로 잘못 기록하지 않는다 —
+        // 그렇게 하면 "돈은 빠져나갔는데 구독 상태는 결제 실패"로 모순된 상태가 커밋된다.
+        subscriptionStatusService.activateAfterFirstPayment(subscription.getId());
 
         return toResponse(subscription);
     }
