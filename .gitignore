@@ -56,6 +56,8 @@ src/main/generated/*
 **/claude.md
 .claude
 .agents/
+.codex/
+.codex-state/
 
 .DS_Store
 
@@ -67,6 +69,7 @@ docs/
 minio_data/
 pgdata/
 GEMINI.md
+AGENTS.md
 CLAUDE.md
 .serena/
 ERD

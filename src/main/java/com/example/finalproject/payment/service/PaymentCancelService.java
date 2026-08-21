@@ -3,6 +3,7 @@ package com.example.finalproject.payment.service;
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.order.domain.StoreOrder;
+import com.example.finalproject.payment.client.TossIdempotencyKeys;
 import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.service.pg.CancelResult;
@@ -34,7 +35,8 @@ public class PaymentCancelService {
             log.info("[PG_CANCEL_REQUEST] orderId={}, storeOrderId={}, amount={}",
                     orderId, storeOrder.getId(), storeOrder.getFinalPrice());
 
-            result = paymentGateway.cancel(payment.getPaymentKey(), refundAmount, reason);
+            String idempotencyKey = TossIdempotencyKeys.forStoreCancel(payment.getId(), storeOrder.getId());
+            result = paymentGateway.cancel(payment.getPaymentKey(), refundAmount, reason, idempotencyKey);
         } catch (Exception e) {
             log.error("[PG_CANCEL_ERROR] orderId={}, paymentId={}, error={}",
                     orderId, payment.getId(), e.getMessage(), e);
@@ -52,4 +54,3 @@ public class PaymentCancelService {
         );
     }
 }
-

@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 
 @FeignClient(
         name = "tossPaymentsClient",
@@ -24,12 +25,16 @@ import org.springframework.web.bind.annotation.RequestBody;
 public interface TossPaymentsClient {
 
     @PostMapping("/v1/payments/confirm")
-    TossConfirmResponse confirm(@RequestBody TossConfirmRequest request);
+    TossConfirmResponse confirm(
+            @RequestBody TossConfirmRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey
+    );
 
     @PostMapping("/v1/payments/{paymentKey}/cancel")
     TossCancelResponse cancel(
             @PathVariable("paymentKey") String paymentKey,
-            @RequestBody TossCancelRequest request
+            @RequestBody TossCancelRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey
     );
 
     /**
@@ -38,11 +43,15 @@ public interface TossPaymentsClient {
     @PostMapping("/v1/billing/authorizations/{authKey}")
     TossBillingKeyIssueResponse issueBillingKey(
             @PathVariable("authKey") String authKey,
-            @RequestBody TossBillingKeyIssueRequest request
+            @RequestBody TossBillingKeyIssueRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey
     );
 
     @DeleteMapping("/v1/billing/{billingKey}")
-    void deleteBillingKey(@PathVariable String billingKey);
+    void deleteBillingKey(
+            @PathVariable String billingKey,
+            @RequestHeader("Idempotency-Key") String idempotencyKey
+    );
 
     /**
      * POST /v1/billing/{billingKey}
@@ -50,7 +59,8 @@ public interface TossPaymentsClient {
     @PostMapping("/v1/billing/{billingKey}")
     TossBillingApproveResponse approveBilling(
             @PathVariable("billingKey") String billingKey,
-            @RequestBody TossBillingApproveRequest request
+            @RequestBody TossBillingApproveRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey
     );
 
 }

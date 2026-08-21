@@ -12,6 +12,7 @@ import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
 import com.example.finalproject.subscription.domain.Subscription;
 import com.example.finalproject.subscription.repository.SubscriptionRepository;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +27,7 @@ public class SubscriptionChargeCommandService {
     private final SubscriptionPaymentRepository subscriptionPaymentRepository;
 
     public record ChargeStart(SubscriptionPayment subscriptionPayment, TossBillingApproveRequest request,
-                               String billingKey) {}
+                               String billingKey, LocalDate nextPaymentDate) {}
 
     @Transactional
     public ChargeStart startCharge(Long subscriptionId) {
@@ -61,7 +62,7 @@ public class SubscriptionChargeCommandService {
 
         // billingKey도 이 트랜잭션 안에서 미리 꺼내 반환한다 — 오케스트레이터가
         // 트랜잭션 밖에서 subscription.getPaymentMethod()를 다시 호출하지 않도록.
-        return new ChargeStart(subscriptionPayment, request, paymentMethod.getBillingKey());
+        return new ChargeStart(subscriptionPayment, request, paymentMethod.getBillingKey(), subscription.getNextPaymentDate());
     }
 
     @Transactional
