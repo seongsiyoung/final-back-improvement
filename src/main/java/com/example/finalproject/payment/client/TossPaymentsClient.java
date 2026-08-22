@@ -12,6 +12,7 @@ import com.example.finalproject.payment.dto.response.TossCancelResponse;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -62,5 +63,12 @@ public interface TossPaymentsClient {
             @RequestBody TossBillingApproveRequest request,
             @RequestHeader("Idempotency-Key") String idempotencyKey
     );
+
+    /**
+     * 주문번호(pgOrderId) 기준 결제 조회. Payment.paymentKey는 approve() 시점에만
+     * 채워지므로, PENDING 상태에서 재조회할 때는 이 메서드를 쓴다.
+     */
+    @GetMapping("/v1/payments/orders/{orderId}")
+    TossConfirmResponse getPaymentByOrderId(@PathVariable("orderId") String orderId);
 
 }

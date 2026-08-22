@@ -26,7 +26,11 @@ public class DeliveryEventListener {
     private final NotificationService notificationService;
     private final SseService sseService;
 
-    @Async
+    // Executor 빈이 mailExecutor 하나뿐이던 시절엔 이름 없는 @Async도 그걸 기본으로
+    // 골라 썼다. webhookExecutor가 추가되면서 후보가 둘이 되면 기본 선택이 모호해져
+    // @Async가 조용히 무제한 스레드(SimpleAsyncTaskExecutor)로 바뀔 수 있어, 기존
+    // 동작을 그대로 보존하기 위해 명시했다.
+    @Async("mailExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void handleDeliveryStatusChanged(DeliveryStatusChangedEvent event) {
         log.info("배달 상태 변경 이벤트 수신 - deliveryId: {}, status: {}",
