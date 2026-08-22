@@ -34,6 +34,14 @@ spring:
         secret-key: test-secret-key
       region:
         static: ap-northeast-2
+    openfeign:
+      client:
+        config:
+          # base-url/secret-key는 하단 toss.payments 참고
+          tossPaymentsClient:
+            connect-timeout: 500
+            read-timeout: 1000
+            follow-redirects: false
 
   servlet:
     multipart:
@@ -114,10 +122,9 @@ logging:
 
 toss:
   payments:
+    # connect/read-timeout, follow-redirects는 위 spring.cloud.openfeign.client.config.tossPaymentsClient 참고
     base-url: "http://localhost:0"
     secret-key: test-toss-secret
-    connect-timeout-ms: 500
-    read-timeout-ms: 1000
   circuit-breaker:
     wait-duration-in-open-state-ms: 500
 
