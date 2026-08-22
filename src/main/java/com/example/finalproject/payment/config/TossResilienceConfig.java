@@ -20,7 +20,7 @@ public class TossResilienceConfig {
     @Value("${toss.circuit-breaker.wait-duration-in-open-state-ms:10000}")
     private long waitDurationInOpenStateMs;
 
-    @Value("${toss.payments.read-timeout-ms:3000}")
+    @Value("${spring.cloud.openfeign.client.config.tossPaymentsClient.read-timeout:3000}")
     private long tossReadTimeoutMs;
 
     /**
@@ -38,7 +38,8 @@ public class TossResilienceConfig {
      * 미만)으로 하는 자동화 테스트에서는 이 1초 제한에 걸릴 일이 없어서 안 드러났는데,
      * 실제 Toss 서버로 나가는 요청이 1초를 넘기면서 Feign read-timeout(3초)보다 먼저
      * 끊겨버리는 게 실측(로컬 프로파일, 실제 웹훅 수신 검증 중)으로 발견됐다. Feign
-     * read-timeout 값(toss.payments.read-timeout-ms)보다 넉넉히 긴 시간으로 맞춰서,
+     * read-timeout 값(spring.cloud.openfeign.client.config.tossPaymentsClient.read-timeout)보다
+     * 넉넉히 긴 시간으로 맞춰서,
      * 실제로 시간을 끊는 주체가 항상 Feign이 되도록(원래 의도한 동작) 되돌린다.
      */
     @Bean
