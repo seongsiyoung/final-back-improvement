@@ -99,7 +99,11 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if (!project.hasProperty('includeManual')) {
+            excludeTags 'manual'
+        }
+    }
 }
 
 jar {
