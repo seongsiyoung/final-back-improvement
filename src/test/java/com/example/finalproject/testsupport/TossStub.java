@@ -86,13 +86,22 @@ public class TossStub implements BeforeAllCallback, AfterAllCallback, BeforeEach
     }
 
     public void stubCancelSuccess() {
+        stubCancelSuccess(1000, 0);
+    }
+
+    public void stubCancelSuccess(int totalAmount, int balanceAmount) {
         server.stubFor(post(urlPathMatching("/v1/payments/.*/cancel"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("""
-                                { "paymentKey": "test-payment-key", "status": "CANCELED" }
-                                """)));
+                                {
+                                  "paymentKey": "test-payment-key",
+                                  "status": "CANCELED",
+                                  "totalAmount": %d,
+                                  "balanceAmount": %d
+                                }
+                                """.formatted(totalAmount, balanceAmount))));
     }
 
     public void stubIssueBillingKeySuccess() {
