@@ -99,7 +99,21 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'manual'
+    }
+}
+
+tasks.register('manualTest', Test) {
+    description = 'Runs manual tests such as load-test data seeders'
+    group = 'verification'
+
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    useJUnitPlatform {
+        includeTags 'manual'
+    }
 }
 
 jar {

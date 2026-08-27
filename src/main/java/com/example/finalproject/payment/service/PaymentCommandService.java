@@ -68,13 +68,20 @@ public class PaymentCommandService {
     }
 
     @Transactional
-    public void revertRefundRequest(Long orderId) {
+    public void revertRefundRequestAndMarkFailed(Long orderId, Long storeOrderId) {
 
         Payment payment = findPaymentWithLock(orderId);
 
         if (payment.getPaymentStatus() == PaymentStatus.REFUND_REQUESTED) {
             payment.revertToPaid();
         }
+
+        // storeOrderId 조회는 락 없이 한다 — markRefundRequested()가 이미
+        // REFUND_REQUESTED 상태에서는 새 환불 시도를 막아, Payment 하나당 동시에
+        // 진행 중인 환불 취소가 하나뿐임을 보장한다. 이 불변조건이 깨지면(예: 같은
+        // Payment에 여러 StoreOrder 환불을 동시 처리하도록 확장) 여기도 락이 필요해진다.
+        paymentRefundRepository.findByStoreOrder_Id(storeOrderId)
+                .ifPresent(PaymentRefund::markPgRejected);
     }
 
     private Payment findPaymentWithLock(Long orderId) {
