@@ -7,6 +7,7 @@ import com.example.finalproject.testsupport.SearchIndexDataSeeder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -17,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+@Tag("manual")
 @EnabledIfSystemProperty(named = "runSearchIndexMeasurement", matches = "true")
 class StoreSearchApiMeasurementTest extends IntegrationTestSupport {
 

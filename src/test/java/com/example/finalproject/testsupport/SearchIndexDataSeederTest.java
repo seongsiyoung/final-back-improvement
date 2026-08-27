@@ -2,6 +2,7 @@ package com.example.finalproject.testsupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -67,6 +68,7 @@ class SearchIndexDataSeederTest extends IntegrationTestSupport {
     }
 
     @ParameterizedTest
+    @Tag("manual")
     @ValueSource(ints = {50_000, 100_000})
     void seed_nationwideProfileDistributesKeywordCandidatesAcrossBothSpatialBuckets(int storeCount) {
         SearchIndexDataSeeder.Dataset dataset = seeder.seed(storeCount, SearchIndexDataSeeder.Profile.NATIONWIDE_NORMAL);
@@ -89,6 +91,7 @@ class SearchIndexDataSeederTest extends IntegrationTestSupport {
     }
 
     @Test
+    @Tag("manual")
     void seed_nationwideProfileCreatesTwoCharacterKeywordCandidatesForTheFirstPage() {
         SearchIndexDataSeeder.Dataset dataset = seeder.seed(50_000, SearchIndexDataSeeder.Profile.NATIONWIDE_NORMAL);
 
@@ -98,6 +101,7 @@ class SearchIndexDataSeederTest extends IntegrationTestSupport {
     }
 
     @Test
+    @Tag("manual")
     void seed_nationwideDenseProfileKeepsTheCommercialCenterBelowTwoThousandTwoHundredStores() {
         SearchIndexDataSeeder.Dataset dataset = seeder.seed(100_000, SearchIndexDataSeeder.Profile.NATIONWIDE_DENSE);
 
