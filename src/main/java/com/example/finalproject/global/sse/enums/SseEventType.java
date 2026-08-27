@@ -1,6 +1,8 @@
 package com.example.finalproject.global.sse.enums;
 
 public enum SseEventType {
+    NOTIFICATION_CREATED("notification-created"),
+    HEARTBEAT("heartbeat"),
     UNREAD_COUNT("unread-count"),
     CONNECTED("connected"),
     STORE_ORDER_CREATED("store-order-created"),

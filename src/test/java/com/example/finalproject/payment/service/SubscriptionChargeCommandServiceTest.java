@@ -1,11 +1,17 @@
 package com.example.finalproject.payment.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.finalproject.global.exception.custom.BusinessException;
+import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.client.TossIdempotencyKeys;
 import com.example.finalproject.payment.domain.PaymentMethod;
+import com.example.finalproject.payment.domain.SubscriptionPayment;
 import com.example.finalproject.payment.enums.PaymentMethodType;
+import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.PaymentMethodRepository;
+import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.subscription.domain.Subscription;
 import com.example.finalproject.subscription.domain.SubscriptionProduct;
@@ -36,6 +42,53 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
     private AddressRepository addressRepository;
     @Autowired
     private LoadTestDataSeeder seeder;
+    @Autowired
+    private SubscriptionPaymentRepository subscriptionPaymentRepository;
+
+    @Test
+    void startCharge_whenApprovedPaymentAlreadyExistsForCycle_throwsWithoutCreatingNewRow() {
+        Subscription subscription = createActiveSubscriptionFixture();
+        SubscriptionPayment approved = subscriptionPaymentRepository.save(SubscriptionPayment.builder()
+                .subscription(subscription)
+                .paymentMethod(PaymentMethodType.CARD)
+                .amount(subscription.getTotalAmount())
+                .pgOrderId("SUB-ALREADY-" + System.nanoTime())
+                .pgProvider("TOSS")
+                .paymentStatus(PaymentStatus.PENDING)
+                .billingCycleDate(subscription.getNextPaymentDate())
+                .build());
+        approved.approve("already-key-" + System.nanoTime(), "pg-tx", "테스트카드사", "1234-****-****-5678");
+        subscriptionPaymentRepository.save(approved);
+        long countBefore = subscriptionPaymentRepository.count();
+
+        assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ALREADY_PROCESSED_PAYMENT));
+
+        assertThat(subscriptionPaymentRepository.count()).isEqualTo(countBefore);
+    }
+
+    @Test
+    void startCharge_whenOnlyFailedPaymentExistsForCycle_succeeds() {
+        Subscription subscription = createActiveSubscriptionFixture();
+        SubscriptionPayment failed = subscriptionPaymentRepository.save(SubscriptionPayment.builder()
+                .subscription(subscription)
+                .paymentMethod(PaymentMethodType.CARD)
+                .amount(subscription.getTotalAmount())
+                .pgOrderId("SUB-FAILED-" + System.nanoTime())
+                .pgProvider("TOSS")
+                .paymentStatus(PaymentStatus.PENDING)
+                .billingCycleDate(subscription.getNextPaymentDate())
+                .build());
+        failed.fail();
+        subscriptionPaymentRepository.save(failed);
+
+        var result = subscriptionChargeCommandService.startCharge(subscription.getId());
+
+        assertThat(result.subscriptionPayment()).isNotNull();
+        assertThat(result.subscriptionPayment().getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+    }
 
     @Test
     void retryingSameCycle_producesSameApproveIdempotencyKey() {

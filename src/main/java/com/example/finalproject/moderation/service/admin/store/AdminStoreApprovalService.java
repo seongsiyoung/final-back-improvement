@@ -1,8 +1,7 @@
 package com.example.finalproject.moderation.service.admin.store;
 
-import com.example.finalproject.communication.domain.Notification;
 import com.example.finalproject.communication.enums.NotificationRefType;
-import com.example.finalproject.communication.repository.NotificationRepository;
+import com.example.finalproject.communication.service.NotificationService;
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.moderation.domain.Approval;
@@ -43,7 +42,7 @@ public class AdminStoreApprovalService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final UserRoleRepository userRoleRepository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
 
     @Transactional(readOnly = true)
     public List<AdminStoreApprovalListResponse> getStoreApprovals(List<ApprovalStatus> statuses) {
@@ -165,12 +164,12 @@ public class AdminStoreApprovalService {
         store.approve();
         grantRole(approval.getUser(), "STORE");
 
-        notificationRepository.save(new Notification(
-                approval.getUser(),
+        notificationService.createNotification(
+                approval.getUser().getId(),
                 "마트 승인 완료",
                 "마트 신청이 승인되었습니다.",
                 NotificationRefType.STORE
-        ));
+        );
     }
 
     public void holdStore(Long approvalId, String adminEmail, String reason) {
@@ -187,12 +186,12 @@ public class AdminStoreApprovalService {
         LocalDateTime heldUntil = LocalDateTime.now().plusDays(HOLD_DAYS);
         approval.hold(admin, reason, heldUntil);
 
-        notificationRepository.save(new Notification(
-                approval.getUser(),
+        notificationService.createNotification(
+                approval.getUser().getId(),
                 "마트 신청 보류",
                 "마트 신청이 보류되었습니다. 사유: " + reason,
                 NotificationRefType.STORE
-        ));
+        );
     }
 
     public void rejectStore(Long approvalId, String adminEmail, String reason) {
@@ -212,12 +211,12 @@ public class AdminStoreApprovalService {
         approval.reject(admin, reason);
         store.reject();
 
-        notificationRepository.save(new Notification(
-                approval.getUser(),
+        notificationService.createNotification(
+                approval.getUser().getId(),
                 "마트 신청 거절",
                 "마트 신청이 거절되었습니다. 사유: " + reason,
                 NotificationRefType.STORE
-        ));
+        );
     }
 
     private Approval getStoreApprovalForDecision(Long approvalId) {

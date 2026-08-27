@@ -21,6 +21,10 @@ public class SubscriptionRecurringCommandService {
     public void advanceAfterSuccessfulCharge(Long subscriptionId) {
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SUBSCRIPTION_NOT_FOUND));
+        // 재시도(PAYMENT_FAILED)가 성공한 경우 ACTIVE로 되돌린다. 이미 ACTIVE인
+        // 정상 결제 경로에서는 이 호출이 상태를 그대로 유지하는 no-op이다.
+        subscription.activate();
+        subscription.resetFailCount();
         subscription.moveNextBillingDate();
         scheduleGenerationService.generateSchedule(subscription, LocalDate.now());
     }

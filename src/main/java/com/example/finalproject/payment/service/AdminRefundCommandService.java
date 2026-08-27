@@ -49,4 +49,15 @@ public class AdminRefundCommandService {
         refund.adminReject();
         refund.getStoreOrder().revertRefundRequest();
     }
+
+    @Transactional
+    public void retry(Long refundId) {
+
+        PaymentRefund refund = refundRepository.findById(refundId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND));
+
+        // 상태 검증은 revertToRequested() 안에서 PG_REJECTED 여부로 이미 이뤄진다
+        // (동일한 BusinessException(INVALID_REFUND_STATUS)을 던짐).
+        refund.revertToRequested();
+    }
 }

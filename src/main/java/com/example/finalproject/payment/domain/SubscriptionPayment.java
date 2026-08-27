@@ -17,6 +17,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -73,19 +74,24 @@ public class SubscriptionPayment extends BaseTimeEntity {
 
     private LocalDateTime paidAt;
 
+    @Column(name = "billing_cycle_date")
+    private LocalDate billingCycleDate;
+
     @Builder
     public SubscriptionPayment(Subscription subscription,
                                PaymentMethodType paymentMethod,
                                PaymentStatus paymentStatus,
                                Integer amount,
                                String pgOrderId,
-                               String pgProvider) {
+                               String pgProvider,
+                               LocalDate billingCycleDate) {
         this.subscription = subscription;
         this.paymentMethod = paymentMethod;
         this.paymentStatus = paymentStatus != null ? paymentStatus : PaymentStatus.PENDING;
         this.amount = amount;
         this.pgOrderId = pgOrderId;
         this.pgProvider = pgProvider;
+        this.billingCycleDate = billingCycleDate;
     }
 
     public void approve(String paymentKey, String pgTransactionId,

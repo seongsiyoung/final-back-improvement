@@ -2,6 +2,8 @@ package com.example.finalproject.payment.domain;
 
 
 import com.example.finalproject.global.domain.BaseTimeEntity;
+import com.example.finalproject.global.exception.custom.BusinessException;
+import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
@@ -17,6 +19,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -24,7 +27,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "payment_refunds")
+@Table(name = "payment_refunds",
+        uniqueConstraints = @UniqueConstraint(name = "uq_refunds_store_order", columnNames = "store_order_id"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PaymentRefund extends BaseTimeEntity {
@@ -85,9 +89,6 @@ public class PaymentRefund extends BaseTimeEntity {
         this.refundAmount = refundAmount;
         this.refundStatus = RefundStatus.APPROVED;
         this.refundedAt = LocalDateTime.now();
-        this.refundStatus = refundStatus;
-        this.isSettled = isSettled;
-
     }
 
     public void confirmRefundDetails(RefundResponsibility responsibility, int refundAmount) {
@@ -106,5 +107,12 @@ public class PaymentRefund extends BaseTimeEntity {
 
     public void markPgRejected() {
         this.refundStatus = RefundStatus.PG_REJECTED;
+    }
+
+    public void revertToRequested() {
+        if (this.refundStatus != RefundStatus.PG_REJECTED) {
+            throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
+        }
+        this.refundStatus = RefundStatus.REQUESTED;
     }
 }

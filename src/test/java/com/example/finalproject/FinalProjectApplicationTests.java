@@ -1,16 +1,9 @@
 package com.example.finalproject;
 
+import com.example.finalproject.testsupport.IntegrationTestSupport;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import com.example.finalproject.global.config.LocalDataInitializer;
-
-@SpringBootTest
-class FinalProjectApplicationTests {
-
-    @MockitoBean
-    private LocalDataInitializer localDataInitializer;
+class FinalProjectApplicationTests extends IntegrationTestSupport {
 
     @Test
     void contextLoads() {

@@ -55,4 +55,10 @@ public class AdminRefundController {
         adminRefundCommandService.reject(refundId);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
+
+    @PostMapping("/{refundId}/retry")
+    public ResponseEntity<ApiResponse<Void>> retry(@PathVariable Long refundId) {
+        adminRefundCommandService.retry(refundId);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
 }

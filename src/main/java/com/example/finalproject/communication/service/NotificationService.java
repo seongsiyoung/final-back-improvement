@@ -4,10 +4,10 @@ import com.example.finalproject.communication.domain.Notification;
 import com.example.finalproject.communication.dto.response.NotificationResponse;
 import com.example.finalproject.communication.enums.NotificationRefType;
 import com.example.finalproject.communication.event.UnreadCountChangedEvent;
+import com.example.finalproject.communication.event.NotificationCreatedEvent;
 import com.example.finalproject.communication.repository.NotificationRepository;
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
-import com.example.finalproject.global.sse.Service.SseService;
 import com.example.finalproject.user.domain.User;
 import com.example.finalproject.user.repository.UserRepository;
 import java.util.List;
@@ -16,7 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Slf4j
 @Service
@@ -26,22 +25,7 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
-    private final SseService sseService;
     private final ApplicationEventPublisher eventPublisher;
-
-
-    @Transactional
-    public SseEmitter subscribe(String email) {
-        User user = getUser(email);
-
-        SseEmitter emitter = sseService.subscribe(user.getId());
-
-        int unreadCount = notificationRepository.countByUserIdAndIsReadFalse(user.getId());
-        eventPublisher.publishEvent(new UnreadCountChangedEvent(user.getId(), unreadCount));
-
-        return emitter;
-    }
-
 
     @Transactional
     public void createNotification(
@@ -59,9 +43,10 @@ public class NotificationService {
                 .referenceType(refType)
                 .build();
 
-        notificationRepository.save(notification);
+        Notification saved = notificationRepository.save(notification);
 
         int unreadCount = notificationRepository.countByUserIdAndIsReadFalse(userId);
+        eventPublisher.publishEvent(new NotificationCreatedEvent(userId, NotificationResponse.from(saved)));
         eventPublisher.publishEvent(new UnreadCountChangedEvent(userId, unreadCount));
     }
 
@@ -104,4 +89,3 @@ public class NotificationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
     }
 }
-
