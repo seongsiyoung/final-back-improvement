@@ -7,12 +7,14 @@ import com.example.finalproject.testsupport.SearchIndexDataSeeder;
 import com.example.finalproject.testsupport.SqlCaptureInspector;
 import com.example.finalproject.user.dto.request.GetStoreSearchRequest;
 import java.util.List;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 
+@Tag("manual")
 @EnabledIfSystemProperty(named = "runSearchIndexMeasurement", matches = "true")
 @TestPropertySource(properties = "spring.jpa.properties.hibernate.session_factory.statement_inspector=com.example.finalproject.testsupport.SqlCaptureInspector")
 class SearchIndexSpatialPredicateTest extends IntegrationTestSupport {

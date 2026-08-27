@@ -99,7 +99,24 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'manual'
+    }
+    systemProperty 'runSearchIndexMeasurement', System.getProperty('runSearchIndexMeasurement', 'false')
+    systemProperty 'searchIndexMeasurementStoreCount', System.getProperty(
+            'searchIndexMeasurementStoreCount', '2000,5000,50000,100000')
+}
+
+tasks.register('manualTest', Test) {
+    description = 'Runs manually selected tests excluded from the default test task'
+    group = 'verification'
+
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    useJUnitPlatform {
+        includeTags 'manual'
+    }
     systemProperty 'runSearchIndexMeasurement', System.getProperty('runSearchIndexMeasurement', 'false')
     systemProperty 'searchIndexMeasurementStoreCount', System.getProperty(
             'searchIndexMeasurementStoreCount', '2000,5000,50000,100000')
