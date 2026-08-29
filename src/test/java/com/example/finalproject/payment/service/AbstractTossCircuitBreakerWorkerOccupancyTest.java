@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,8 +57,17 @@ import org.springframework.test.util.ReflectionTestUtils;
  */
 abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends IntegrationTestSupport {
 
-    static final int TOMCAT_MAX_THREADS = 8;
-    private static final int CONFIRM_ATTEMPT_POOL_SIZE = 10;
+    // 톰캣 워커 수·confirm 동시성은 규모(8-worker vs 200-worker)별로 달라 하위 클래스가
+    // 오버라이드한다 — 톰캣 스레드 설정 자체는 static @DynamicPropertySource라 이 값을 직접
+    // 참조할 수 없으므로, 각 하위 클래스가 자기 상수로 별도 @DynamicPropertySource를 갖는다.
+    protected int tomcatMaxThreads() {
+        return 8;
+    }
+
+    protected int confirmAttemptPoolSize() {
+        return 10;
+    }
+
     // TimeLimiter outer bound(read-timeout 60000ms + 2000ms 버퍼 = 62000ms)보다 확실히 길게 잡아,
     // 실제로 시간을 끊는 주체가 항상 클라이언트 쪽(Feign read-timeout/TimeLimiter)이 되도록 한다 —
     // WireMock 스텁 자체의 지연이 먼저 끝나버리면 이 테스트가 검증하려는 상황이 재현되지 않는다.
@@ -70,9 +80,18 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
     private static final long CATEGORIES_INTERVAL_MS = 150;
     private static final long POLL_INTERVAL_MS = 250;
     // fail-fast(서킷 OPEN/HALF_OPEN 차단) 응답 뒤 다음 confirm을 재제출하기 전에 두는 페이싱 —
-    // 이게 없으면 슬롯 10개가 초당 수백~수천 건씩 재제출을 반복해 톰캣 busy 지표가
-    // "실제 워커 점유 시간"이 아니라 "요청 폭주"로 왜곡된다.
-    private static final long RESUBMIT_PACING_MS = 200;
+    // 이게 없으면 풀 크기만큼 초당 수백~수천 건씩 재제출을 반복해 톰캣 busy 지표가
+    // "실제 워커 점유 시간"이 아니라 "요청 폭주"로 왜곡된다. 스레드 1개당 고정 간격(예: 200ms)으로
+    // 두면 풀 크기가 커질수록(8-worker 10개 -> 200-worker 230개) 총 재시도량이 그대로 비례해
+    // 늘어나 버린다(실제로 200-worker에서 초당 ~1,150건까지 치솟아 busy 지표를 왜곡했다). 대신
+    // 풀 크기와 무관하게 총 재시도량이 8-worker 실험과 같은 수준(초당 50건, = 10개 * 1/0.2초)을
+    // 유지하도록 풀 크기에 비례해 간격을 늘린다 — 8-worker(풀 10)에서는 정확히 기존 200ms와
+    // 같은 값이 나와 그 실험 결과에 영향이 없다.
+    private static final int TARGET_AGGREGATE_RESUBMIT_RATE_PER_SEC = 50;
+
+    private long resubmitPacingMs() {
+        return confirmAttemptPoolSize() * 1000L / TARGET_AGGREGATE_RESUBMIT_RATE_PER_SEC;
+    }
 
     @RegisterExtension
     static TossStub toss = new TossStub();
@@ -80,10 +99,8 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
     @DynamicPropertySource
     static void tossProps(DynamicPropertyRegistry registry) {
         registry.add("toss.payments.base-url", toss::baseUrl);
-        // 이 테스트에만 적용 — application-test.yml(전역)을 건드리면 다른 통합 테스트에까지
-        // 영향 범위가 넓어진다(ThreadExhaustionTest와 동일한 이유).
-        registry.add("server.tomcat.threads.max", () -> TOMCAT_MAX_THREADS);
-        registry.add("server.tomcat.threads.min-spare", () -> TOMCAT_MAX_THREADS);
+        // 톰캣 스레드 수(server.tomcat.threads.max/min-spare)는 규모별로 값이 달라 여기서
+        // 등록하지 않는다 — 각 하위 클래스가 자기 상수로 별도 @DynamicPropertySource를 갖는다.
         // tomcat.threads.busy 메트릭은 Tomcat MBean 등록이 켜져 있어야 노출된다(기본 꺼짐).
         registry.add("server.tomcat.mbeanregistry.enabled", () -> true);
         // prod와 동일한 조건을 재현한다 — 이 값이 이번 테스트의 핵심 전제다.
@@ -144,8 +161,13 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
     /** confirm 시도 1건의 결과. durationMs가 짧으면(<500ms) 서킷 OPEN에 의한 fail-fast로 본다. */
     record ConfirmAttemptResult(long startElapsedMs, long durationMs, boolean failFast, String outcome) {}
 
-    /** 폴링 시점의 시스템 상태 스냅샷(톰캣 워커 점유, WireMock 도달 건수, JVM 스레드 수). */
-    record OccupancySample(long elapsedMs, double tomcatBusy, long wiremockConfirmCount, int jvmThreadsLive) {}
+    /**
+     * 폴링 시점의 시스템 상태 스냅샷(톰캣 워커 점유, WireMock 도달 건수, JVM 스레드 수).
+     * confirmInFlight는 그 순간 실제로 Toss 응답을 기다리며 블로킹 중인 confirm HTTP 호출 수 —
+     * 서버 지표(tomcatBusy)와 별개로, 클라이언트가 설정한 동시성에 실제로 도달했는지 보여준다.
+     */
+    record OccupancySample(
+            long elapsedMs, double tomcatBusy, long wiremockConfirmCount, int jvmThreadsLive, int confirmInFlight) {}
 
     /** 무관 API(categories) 요청 1건의 응답 시간. */
     record CategoriesSample(long elapsedMs, long latencyMs) {}
@@ -173,16 +195,18 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
         List<OccupancySample> occupancySamples = new CopyOnWriteArrayList<>();
         List<CategoriesSample> categoriesSamples = new CopyOnWriteArrayList<>();
         AtomicBoolean keepRunning = new AtomicBoolean(true);
+        AtomicInteger confirmInFlight = new AtomicInteger();
 
-        ExecutorService confirmPool = Executors.newFixedThreadPool(CONFIRM_ATTEMPT_POOL_SIZE);
+        int confirmAttemptPoolSize = confirmAttemptPoolSize();
+        ExecutorService confirmPool = Executors.newFixedThreadPool(confirmAttemptPoolSize);
         ExecutorService categoriesPool = Executors.newFixedThreadPool(2);
         ExecutorService pollerPool = Executors.newSingleThreadExecutor();
 
         try {
             // 결제 장애 요청 생성기 — 하나가 끝나는 즉시(성공/실패/fail-fast 무관) 다음 시도를
-            // 계속 submit해, 풀 크기(10)를 넘지 않는 선에서 지속적으로 confirm을 시도한다.
-            for (int i = 0; i < CONFIRM_ATTEMPT_POOL_SIZE; i++) {
-                submitNextConfirmAttempt(confirmPool, keepRunning, confirmResults, testStart);
+            // 계속 submit해, 풀 크기를 넘지 않는 선에서 지속적으로 confirm을 시도한다.
+            for (int i = 0; i < confirmAttemptPoolSize; i++) {
+                submitNextConfirmAttempt(confirmPool, keepRunning, confirmResults, confirmInFlight, testStart);
             }
 
             // 무관 API(categories) 생성기 — 결제 요청 대기와 완전히 독립적으로 계속 발사한다.
@@ -210,7 +234,8 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
                     long wiremockCount =
                             toss.server.findAll(postRequestedFor(urlPathMatching("/v1/payments/confirm"))).size();
                     int jvmThreads = Thread.activeCount();
-                    occupancySamples.add(new OccupancySample(elapsed, busy, wiremockCount, jvmThreads));
+                    occupancySamples.add(new OccupancySample(
+                            elapsed, busy, wiremockCount, jvmThreads, confirmInFlight.get()));
                     sleepQuietly(POLL_INTERVAL_MS);
                 }
             });
@@ -237,7 +262,22 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
                 .max().orElse(0);
         assertThat(maxBusyObserved)
                 .as("[%s] 톰캣 워커가 실제로 압박받았어야 한다(재현 성립 여부 negative check)", label)
-                .isGreaterThanOrEqualTo(TOMCAT_MAX_THREADS - 1);
+                .isGreaterThanOrEqualTo(tomcatMaxThreads() - 1);
+
+        // negative check: 부하 생성기(클라이언트) 자체가 설정한 동시성에 실제로 도달했는지 확인.
+        // 이게 없으면 톰캣 busy가 낮게 나온 원인이 "서킷브레이커 효과"인지 "클라이언트가 애초에
+        // 충분한 동시 요청을 못 만들어냈다"인지 구분할 수 없다 — 동시성 규모가 커질수록
+        // (200-worker 조건) 클라이언트/DB 커넥션 풀이 먼저 병목될 위험이 커지므로 특히 중요하다.
+        int maxInFlightObserved = occupancySamples.stream()
+                .mapToInt(OccupancySample::confirmInFlight)
+                .max().orElse(0);
+        // 절대값(-5) 대신 비율(90%)로 잡는다 — 풀 크기가 커질수록(8 -> 230) 매 순간 몇 개가
+        // prepare()/재제출 사이 전환 중이라 항상 약간의 미세한 미달이 자연스럽게 생긴다.
+        int minAcceptableInFlight = (int) Math.ceil(confirmAttemptPoolSize() * 0.9);
+        assertThat(maxInFlightObserved)
+                .as("[%s] 부하 생성기가 설정한 동시성(%d)에 실제로 도달했어야 한다"
+                        + "(클라이언트/DB 풀이 병목이 아님을 확인)", label, confirmAttemptPoolSize())
+                .isGreaterThanOrEqualTo(minAcceptableInFlight);
     }
 
     private void registerStateTransitionListenerAfterFirstRun(
@@ -267,7 +307,7 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
 
     private void submitNextConfirmAttempt(
             ExecutorService pool, AtomicBoolean keepRunning,
-            List<ConfirmAttemptResult> results, long testStart) {
+            List<ConfirmAttemptResult> results, AtomicInteger confirmInFlight, long testStart) {
         if (!keepRunning.get() || pool.isShutdown()) {
             return;
         }
@@ -279,7 +319,12 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
             String outcome;
             try {
                 Long paymentId = prepareNewPayment();
-                callConfirm(paymentId);
+                confirmInFlight.incrementAndGet();
+                try {
+                    callConfirm(paymentId);
+                } finally {
+                    confirmInFlight.decrementAndGet();
+                }
                 outcome = "COMPLETED";
             } catch (Exception e) {
                 outcome = e.getClass().getSimpleName();
@@ -290,14 +335,14 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
                     start - testStart, duration, failFast, outcome));
             if (failFast) {
                 // 서킷이 OPEN/HALF_OPEN이면 매 시도가 몇 ms 만에 fail-fast로 끝나서, 대기 없이
-                // 바로바로 재제출하면 슬롯 10개가 초당 수백~수천 건씩 쏴대는 플러딩이 된다 —
+                // 바로바로 재제출하면 슬롯 개수만큼 초당 수백~수천 건씩 쏴대는 플러딩이 된다 —
                 // "워커가 오래 붙잡혀서 바쁘다"가 아니라 "요청이 너무 많이 몰려서 바쁘다"가 돼버려
                 // 톰캣 busy 지표가 서킷 효과를 보여주지 못하게 왜곡된다. fail-fast일 때만 짧게
                 // 페이싱을 줘서 실제 운영에서 재시도할 법한 속도에 가깝게 맞춘다. CLOSED 구간(각
                 // 시도가 최대 60초 걸림)은 이 지연이 붙어도 사실상 영향이 없다.
-                sleepQuietly(RESUBMIT_PACING_MS);
+                sleepQuietly(resubmitPacingMs());
             }
-            submitNextConfirmAttempt(pool, keepRunning, results, testStart);
+            submitNextConfirmAttempt(pool, keepRunning, results, confirmInFlight, testStart);
         });
     }
 

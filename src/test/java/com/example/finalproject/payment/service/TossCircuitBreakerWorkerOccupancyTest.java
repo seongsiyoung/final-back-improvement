@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 /**
  * read-timeout 60초(prod와 동일) 조건, 서킷브레이커 적용 상태(현재 코드 그대로)에서
@@ -24,6 +26,21 @@ import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuit
  */
 @Tag("manual")
 class TossCircuitBreakerWorkerOccupancyTest extends AbstractTossCircuitBreakerWorkerOccupancyTest {
+
+    private static final int TOMCAT_MAX_THREADS = 8;
+
+    // 톰캣 스레드 수는 규모(8-worker vs 200-worker)별로 값이 달라 상위 클래스가 아닌
+    // 여기서 등록한다(AbstractTossCircuitBreakerWorkerOccupancyTest 참고).
+    @DynamicPropertySource
+    static void tomcatThreadsProps(DynamicPropertyRegistry registry) {
+        registry.add("server.tomcat.threads.max", () -> TOMCAT_MAX_THREADS);
+        registry.add("server.tomcat.threads.min-spare", () -> TOMCAT_MAX_THREADS);
+    }
+
+    @Override
+    protected int tomcatMaxThreads() {
+        return TOMCAT_MAX_THREADS;
+    }
 
     @Test
     void circuitBreakerLimitsWorkerOccupancy_afterOutageDetected() throws Exception {
