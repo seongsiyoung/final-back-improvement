@@ -553,6 +553,8 @@ public class AdminFinanceService {
             case PaymentStatus.REFUND_REQUESTED -> "\ud658\ubd88 \uc694\uccad";
             case PaymentStatus.FAILED -> "\uacb0\uc81c \uc2e4\ud328";
             case PaymentStatus.READY, PaymentStatus.PENDING -> "\ud655\uc778 \ub300\uae30";
+            case PaymentStatus.REVERSAL_PENDING -> "\ucde8\uc18c \ucc98\ub9ac\uc911";
+            case PaymentStatus.RECONCILIATION_REQUIRED -> "\ud655\uc778 \ud544\uc694";
         };
     }
 
