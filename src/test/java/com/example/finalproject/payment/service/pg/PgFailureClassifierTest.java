@@ -29,6 +29,11 @@ class PgFailureClassifierTest {
                 Collections.emptyMap());
     }
 
+    private FeignException conflict(String body) {
+        return new FeignException.Conflict(
+                "conflict", request, body.getBytes(StandardCharsets.UTF_8), Collections.emptyMap());
+    }
+
     @Test
     @DisplayName("회로차단기가 열려 호출이 나가지 않으면 NOT_SENT")
     void circuitOpenIsNotSent() {
@@ -50,6 +55,22 @@ class PgFailureClassifierTest {
     @DisplayName("이미 처리됐다는 4xx 는 거절이 아니라 RESULT_UNKNOWN — 돈이 빠졌을 수 있다")
     void alreadyProcessedIsResultUnknown() {
         Throwable e = badRequest("{\"code\":\"ALREADY_PROCESSED_PAYMENT\",\"message\":\"이미 처리된 결제 입니다.\"}");
+
+        assertThat(PgFailureClassifier.classify(e)).isEqualTo(PgCallOutcome.RESULT_UNKNOWN);
+    }
+
+    @Test
+    @DisplayName("같은 멱등 요청이 처리 중인 409는 RESULT_UNKNOWN")
+    void idempotentRequestProcessingIsResultUnknown() {
+        Throwable e = conflict("{\"code\":\"IDEMPOTENT_REQUEST_PROCESSING\"}");
+
+        assertThat(PgFailureClassifier.classify(e)).isEqualTo(PgCallOutcome.RESULT_UNKNOWN);
+    }
+
+    @Test
+    @DisplayName("이미 승인 또는 취소된 주문번호의 400은 RESULT_UNKNOWN")
+    void duplicatedOrderIdIsResultUnknown() {
+        Throwable e = badRequest("{\"code\":\"DUPLICATED_ORDER_ID\"}");
 
         assertThat(PgFailureClassifier.classify(e)).isEqualTo(PgCallOutcome.RESULT_UNKNOWN);
     }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import feign.RetryableException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import java.util.Set;
 
 /**
  * Toss 호출에서 올라온 예외를 금융 처리 관점의 결과로 옮긴다.
@@ -19,6 +20,9 @@ public final class PgFailureClassifier {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String ALREADY_PREFIX = "ALREADY_";
+    private static final Set<String> AMBIGUOUS_CLIENT_ERROR_CODES = Set.of(
+            "IDEMPOTENT_REQUEST_PROCESSING",
+            "DUPLICATED_ORDER_ID");
 
     private PgFailureClassifier() {
     }
@@ -37,7 +41,7 @@ public final class PgFailureClassifier {
         }
 
         if (throwable instanceof FeignException.FeignClientException e) {
-            return isAlreadyDoneCode(e) ? PgCallOutcome.RESULT_UNKNOWN : PgCallOutcome.EXPLICIT_REJECTION;
+            return isAmbiguousOutcomeCode(e) ? PgCallOutcome.RESULT_UNKNOWN : PgCallOutcome.EXPLICIT_REJECTION;
         }
 
         if (throwable instanceof FeignException.FeignServerException) {
@@ -47,14 +51,15 @@ public final class PgFailureClassifier {
         return PgCallOutcome.RESULT_UNKNOWN;
     }
 
-    private static boolean isAlreadyDoneCode(FeignException e) {
+    private static boolean isAmbiguousOutcomeCode(FeignException e) {
         String body = e.contentUTF8();
         if (body == null || body.isBlank()) {
             return false;
         }
         try {
             JsonNode code = OBJECT_MAPPER.readTree(body).get("code");
-            return code != null && code.asText().startsWith(ALREADY_PREFIX);
+            return code != null && (code.asText().startsWith(ALREADY_PREFIX)
+                    || AMBIGUOUS_CLIENT_ERROR_CODES.contains(code.asText()));
         } catch (Exception ignored) {
             return false;
         }
