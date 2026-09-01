@@ -116,7 +116,7 @@ public class RefundScenarioSeeder {
         paymentRefundRepository.save(PaymentRefund.builder()
                 .payment(payment)
                 .storeOrder(storeOrder)
-                .refundAmount(0)
+                .refundAmount(storeOrder.getFinalPrice())
                 .refundReason("고객 변심")
                 .refundStatus(RefundStatus.REQUESTED)
                 .build());
@@ -164,6 +164,38 @@ public class RefundScenarioSeeder {
                 previous.storeOrderId(),
                 previous.amount(),
                 previous.reason());
+    }
+
+    /**
+     * 같은 주문에 승인된 환불 한 건과 거절된 환불 한 건.
+     * 반환 RefundTarget.amount() 에는 승인된 금액만 담는다.
+     */
+    public RefundTarget approvedAndRejectedRefundHistory(String buyerEmail) {
+        StoreOrder storeOrder = createApprovedPaymentWithStoreOrder(buyerEmail);
+        Payment payment = paymentRepository.findByOrder_Id(storeOrder.getOrder().getId()).orElseThrow();
+
+        PaymentRefund approved = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrder)
+                .refundAmount(storeOrder.getFinalPrice())
+                .refundReason("승인된 환불")
+                .refundStatus(RefundStatus.PG_PENDING)
+                .build();
+        approved.markPgApproved();
+        approved.adminApprove(storeOrder.getFinalPrice());
+        paymentRefundRepository.save(approved);
+
+        PaymentRefund rejected = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrder)
+                .refundAmount(1500)
+                .refundReason("거절된 환불")
+                .refundStatus(RefundStatus.REQUESTED)
+                .build();
+        rejected.adminReject();
+        paymentRefundRepository.save(rejected);
+
+        return targetOf(storeOrder, "승인된 환불");
     }
 
     private StoreOrder createApprovedPaymentWithStoreOrder(String buyerEmail) {

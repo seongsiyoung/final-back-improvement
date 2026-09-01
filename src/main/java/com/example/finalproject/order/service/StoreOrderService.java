@@ -21,6 +21,7 @@ import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.order.event.StoreOrderAcceptedEvent;
 import com.example.finalproject.order.repository.OrderProductRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
+import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.service.RefundTarget;
 import com.example.finalproject.store.domain.Store;
@@ -333,7 +334,7 @@ public class StoreOrderService {
 
         // 환불 금액 (상점 기준: 배달비 제외, storeProductPrice만)
         long refundAmount = paymentRefundRepository.sumStoreProductPriceByStoreOrderStoreIdAndRefundedAtBetween(storeId,
-                monthStart, monthEnd);
+                monthStart, monthEnd, RefundStatus.APPROVED);
 
         // 환불 건수 (CANCELLED + REJECTED)
         List<StoreOrderStatus> refundStatuses = List.of(StoreOrderStatus.CANCELLED, StoreOrderStatus.REJECTED);

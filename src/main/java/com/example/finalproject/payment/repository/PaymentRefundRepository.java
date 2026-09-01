@@ -43,11 +43,19 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
             "WHERE r.id = :refundId")
     Optional<PaymentRefund> findAdminRefundDetailById(@Param("refundId") Long refundId);
 
+    /**
+     * 호출부 없음. 쓰기 전에 refundStatus 조건을 넣어야 한다 —
+     * 거절된 환불까지 합산된다.
+     */
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0 ) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.payment.id = :paymentId")
     int sumRefundAmountByPaymentId(@Param("paymentId") Long paymentId);
 
+    /**
+     * 호출부 없음. 쓰기 전에 refundStatus 조건을 넣어야 한다.
+     * refundedAt 은 PG 환불이 확인된 시각이라 요청·거절 건에는 없다.
+     */
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.store.id = :storeId "
@@ -63,11 +71,13 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
     @Query("SELECT COALESCE(SUM(pr.storeOrder.storeProductPrice), 0L) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.store.id = :storeId "
+            + "AND pr.refundStatus = :approvedStatus "
             + "AND pr.refundedAt BETWEEN :start AND :end")
     long sumStoreProductPriceByStoreOrderStoreIdAndRefundedAtBetween(
             @Param("storeId") Long storeId,
             @Param("start") LocalDateTime start,
-            @Param("end") LocalDateTime end);
+            @Param("end") LocalDateTime end,
+            @Param("approvedStatus") RefundStatus approvedStatus);
 
     /**
      * 아직 종결되지 않은 환불 한 건을 찾는다.
@@ -92,8 +102,11 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
     @Query("SELECT pr.storeOrder.id, COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.id IN :storeOrderIds "
+            + "AND pr.refundStatus = :approvedStatus "
             + "GROUP BY pr.storeOrder.id")
-    List<Object[]> sumRefundAmountGroupByStoreOrderId(@Param("storeOrderIds") List<Long> storeOrderIds);
+    List<Object[]> sumRefundAmountGroupByStoreOrderId(
+            @Param("storeOrderIds") List<Long> storeOrderIds,
+            @Param("approvedStatus") RefundStatus approvedStatus);
 
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
@@ -111,6 +124,19 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
 
     long countByRefundStatus(RefundStatus refundStatus);
 
+    /**
+     * 요청·거절 집계용. 거절된 환불은 refundedAt 이 영원히 없으므로 createdAt 을 쓴다.
+     */
+    @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
+            + "FROM PaymentRefund pr "
+            + "WHERE pr.refundStatus = :refundStatus "
+            + "AND pr.createdAt BETWEEN :start AND :end")
+    long sumRefundAmountByRefundStatusAndCreatedAtBetween(
+            @Param("refundStatus") RefundStatus refundStatus,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
+
+    /** 승인 집계용. refundedAt 은 PG 환불이 확인된 시각이다. */
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.refundStatus = :refundStatus "
