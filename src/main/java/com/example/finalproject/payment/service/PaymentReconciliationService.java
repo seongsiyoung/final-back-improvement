@@ -33,13 +33,21 @@ public class PaymentReconciliationService {
         try {
             pg = tossPaymentsClient.getPaymentByOrderId(payment.getPgOrderId());
         } catch (FeignException.NotFound e) {
+            // REVERSAL_PENDING은 Toss가 승인 성공을 돌려준 뒤에만 붙는 상태다.
+            // 그런데 조회에 기록이 없다면 두 사실이 모순이므로 승인 여부를 단정할 수 없다.
+            // FAILED로 적으면 돈이 나간 결제를 "돈이 안 나갔음"으로 확정하게 되고,
+            // 그 상태를 집어가는 스케줄러 조건이 없어 영구히 사라진다.
+            if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
+                log.error("보상 취소 대상인데 PG에 결제 기록이 없어 확인 필요로 남김. paymentId={}, pgOrderId={}",
+                        payment.getId(), payment.getPgOrderId());
+                paymentConfirmCommandService.markConfirmReconciliationRequired(payment.getId());
+                return;
+            }
+
+            // PENDING은 승인 응답을 받은 적이 없다. 기록이 없다면 승인된 적 없음이 확정된다.
             log.info("PG에 결제 기록이 없어 실패 처리함. paymentId={}, pgOrderId={}",
                     payment.getId(), payment.getPgOrderId());
-            if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
-                paymentConfirmCommandService.failReversalPending(payment.getId());
-            } else {
-                paymentConfirmCommandService.failPending(payment.getId());
-            }
+            paymentConfirmCommandService.failPending(payment.getId());
             return;
         }
 

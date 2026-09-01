@@ -20,6 +20,7 @@ import feign.RequestTemplate;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -97,6 +98,22 @@ class PaymentReconciliationServiceTest {
 
         verify(paymentConfirmCommandService).failPending(3L);
         verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("보상 취소 대상인데 PG에 기록이 없으면 실패로 확정하지 않고 확인 필요로 남긴다")
+    void reconcile_reversalPendingAndPgHasNoRecord_marksReconciliationRequired() {
+        Payment payment = reversalPendingPayment(31L, "order-31");
+        Request request = Request.create(HttpMethod.GET, "/v1/payments/orders/order-31",
+                Collections.emptyMap(), null, StandardCharsets.UTF_8, new RequestTemplate());
+        when(tossPaymentsClient.getPaymentByOrderId("order-31"))
+                .thenThrow(new FeignException.NotFound("not found", request, null, null));
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(paymentConfirmCommandService).markConfirmReconciliationRequired(31L);
+        verify(paymentConfirmCommandService, never()).failReversalPending(any());
+        verify(paymentConfirmCommandService, never()).failPending(any());
     }
 
     @Test
