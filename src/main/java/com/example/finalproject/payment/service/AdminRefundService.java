@@ -24,15 +24,8 @@ public class AdminRefundService {
 
     public void approveAndCancel(Long refundId, PostPaymentRefundApproveRequest req) {
 
-        commandService.approve(refundId, req);
-
-        PaymentRefund refund = refundRepository.findById(refundId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND));
-
-        paymentCancelService.cancel(
-                refund.getStoreOrder(),
-                refund.getRefundAmount(),
-                refund.getRefundReason());
+        RefundTarget target = commandService.approve(refundId, req);
+        paymentCancelService.cancel(target);
     }
 
     @Transactional(readOnly = true)

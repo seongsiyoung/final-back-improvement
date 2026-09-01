@@ -3,6 +3,7 @@ package com.example.finalproject.order.service;
 import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.service.PaymentCancelService;
+import com.example.finalproject.payment.service.RefundTarget;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ public class StoreOrderAutoRejectService {
 
         storeOrder.requestReject();
         storeOrderTtlService.removeAutoReject(storeOrderId);
-        paymentCancelService.cancel(storeOrder, storeOrder.getFinalPrice(), "자동 거절 (미응답)");
+        paymentCancelService.cancel(new RefundTarget(
+                storeOrder.getOrder().getId(), storeOrder.getId(), storeOrder.getFinalPrice(), "자동 거절 (미응답)"));
     }
 }

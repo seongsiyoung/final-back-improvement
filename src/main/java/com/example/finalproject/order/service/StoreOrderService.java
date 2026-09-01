@@ -23,6 +23,7 @@ import com.example.finalproject.order.repository.OrderProductRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.service.PaymentCancelService;
+import com.example.finalproject.payment.service.RefundTarget;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.store.domain.StoreBusinessHour;
 import com.example.finalproject.store.enums.StoreActiveStatus;
@@ -158,7 +159,8 @@ public class StoreOrderService {
         storeOrder.requestReject();
         storeOrderTtlService.removeAutoReject(storeOrderId);
 
-        paymentCancelService.cancel(storeOrder, storeOrder.getFinalPrice(), reason);
+        paymentCancelService.cancel(new RefundTarget(
+                storeOrder.getOrder().getId(), storeOrder.getId(), storeOrder.getFinalPrice(), reason));
 
         log.info("주문 거절 요청 완료(환불 처리 대기) - storeOrderId={}, reason={}", storeOrderId, reason);
     }
@@ -406,7 +408,8 @@ public class StoreOrderService {
         if (storeOrder.getStatus() == StoreOrderStatus.PENDING) {
             storeOrder.requestReject();
             storeOrderTtlService.removeAutoReject(storeOrderId);
-            paymentCancelService.cancel(storeOrder, storeOrder.getFinalPrice(), "자동 거절 (미응답)");
+            paymentCancelService.cancel(new RefundTarget(
+                    storeOrder.getOrder().getId(), storeOrder.getId(), storeOrder.getFinalPrice(), "자동 거절 (미응답)"));
             log.info("[TTL][추적] processAutoRejectByTtl - REJECT_REQUESTED 반영 및 PG 환불 요청 완료 storeOrderId={}",
                     storeOrderId);
         } else {

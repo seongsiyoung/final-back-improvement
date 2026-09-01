@@ -19,7 +19,7 @@ public class AdminRefundCommandService {
     private final RefundAmountCalculator refundAmountCalculator;
 
     @Transactional
-    public void approve(Long refundId, PostPaymentRefundApproveRequest req) {
+    public RefundTarget approve(Long refundId, PostPaymentRefundApproveRequest req) {
 
         PaymentRefund refund = refundRepository.findById(refundId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND));
@@ -34,6 +34,12 @@ public class AdminRefundCommandService {
         );
 
         refund.confirmRefundDetails(req.getResponsibility(), refundAmount);
+
+        return new RefundTarget(
+                refund.getStoreOrder().getOrder().getId(),
+                refund.getStoreOrder().getId(),
+                refundAmount,
+                refund.getRefundReason());
     }
 
     @Transactional

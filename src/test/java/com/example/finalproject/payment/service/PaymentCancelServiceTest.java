@@ -75,7 +75,8 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
         when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
                 .thenThrow(new RuntimeException("PG 타임아웃"));
 
-        assertThatThrownBy(() -> paymentCancelService.cancel(storeOrder, 1000, "고객 변심"))
+        assertThatThrownBy(() -> paymentCancelService.cancel(new RefundTarget(
+                storeOrder.getOrder().getId(), storeOrder.getId(), 1000, "고객 변심")))
                 .isInstanceOf(BusinessException.class);
 
         Payment reloadedPayment = paymentRepository.findById(payment.getId()).orElseThrow();
@@ -92,8 +93,10 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
         when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
                 .thenReturn(new CancelResult(1000));
 
-        paymentCancelService.cancel(storeOrders[0], 1000, "재고 부족");
-        paymentCancelService.cancel(storeOrders[1], 1000, "재고 부족");
+        paymentCancelService.cancel(new RefundTarget(
+                storeOrders[0].getOrder().getId(), storeOrders[0].getId(), 1000, "재고 부족"));
+        paymentCancelService.cancel(new RefundTarget(
+                storeOrders[1].getOrder().getId(), storeOrders[1].getId(), 1000, "재고 부족"));
 
         ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(paymentGateWay, org.mockito.Mockito.times(2))

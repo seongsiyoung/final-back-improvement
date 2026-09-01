@@ -8,6 +8,7 @@ import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.order.event.StoreOrderRejectedEvent;
 import com.example.finalproject.order.repository.OrderProductRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
+import com.example.finalproject.payment.service.RefundTarget;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,12 +52,23 @@ public class StoreOrderStatusService {
     }
 
     @Transactional
-    public void requestCancel(Long storeOrderId, String reason) {
+    public RefundTarget requestCancel(Long storeOrderId, Long userId, String reason) {
 
         StoreOrder storeOrder = storeOrderRepository.findById(storeOrderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORE_ORDER_NOT_FOUND));
 
+        if (!storeOrder.getOrder().getUser().getId().equals(userId)) {
+            log.warn("[STORE_ORDER_CANCEL_FORBIDDEN] userId={}, storeOrderId={}", userId, storeOrderId);
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+
         storeOrder.requestCancel();
+
+        return new RefundTarget(
+                storeOrder.getOrder().getId(),
+                storeOrderId,
+                storeOrder.getFinalPrice(),
+                reason);
     }
 
     private void completeCancel(StoreOrder storeOrder, String reason) {
