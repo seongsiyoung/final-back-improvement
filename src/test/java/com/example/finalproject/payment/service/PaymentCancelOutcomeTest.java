@@ -133,8 +133,8 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("PG 호출이 나가지 않았으면 요청 상태를 되돌려 다시 취소 요청할 수 있다")
-    void notSent_revertsToRetryableState() {
+    @DisplayName("호출이 나가지 않았어도 아무것도 바꾸지 않고 PG_PENDING 으로 남긴다 — 취소는 여전히 해야 한다")
+    void notSent_keepsPgPending() {
         RefundTarget target = refundScenarioSeeder.cancelRequested(newBuyerEmail());
         CircuitBreaker breaker = CircuitBreaker.ofDefaults("toss-payment");
         when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
@@ -144,11 +144,11 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
                 .isInstanceOf(BusinessException.class);
 
         assertThat(storeOrderRepository.findById(target.storeOrderId()).orElseThrow().getStatus())
-                .isEqualTo(StoreOrderStatus.PENDING);
+                .isEqualTo(StoreOrderStatus.CANCEL_REQUESTED);
         assertThat(paymentRepository.findByOrder_Id(target.orderId()).orElseThrow().getPaymentStatus())
-                .isEqualTo(PaymentStatus.APPROVED);
+                .isEqualTo(PaymentStatus.REFUND_REQUESTED);
         assertThat(paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow().getRefundStatus())
-                .isEqualTo(RefundStatus.REQUESTED);
+                .isEqualTo(RefundStatus.PG_PENDING);
     }
 
     @Test

@@ -54,8 +54,6 @@ public class PaymentCancelService {
 
             if (outcome == PgCallOutcome.EXPLICIT_REJECTION) {
                 paymentCommandService.handleCancelRejection(target);
-            } else if (outcome == PgCallOutcome.NOT_SENT) {
-                paymentCommandService.handleCancelNotSent(target);
             }
 
             throw new BusinessException(ErrorCode.PAYMENT_CANCEL_FAILED);
