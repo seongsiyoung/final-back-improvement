@@ -22,7 +22,6 @@ import com.example.finalproject.order.event.StoreOrderAcceptedEvent;
 import com.example.finalproject.order.repository.OrderProductRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
-import com.example.finalproject.payment.service.PaymentCancelService;
 import com.example.finalproject.payment.service.RefundTarget;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.store.domain.StoreBusinessHour;
@@ -44,6 +43,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
@@ -61,8 +61,9 @@ public class StoreOrderService {
     private final ApplicationEventPublisher eventPublisher;
     private final SseService sseService;
     private final StoreOrderTtlService storeOrderTtlService;
-    private final PaymentCancelService paymentCancelService;
     private final StoreOrderAutoRejectService storeOrderAutoRejectService;
+    private final StoreOrderRejectCommandService storeOrderRejectCommandService;
+    private final StoreOrderRejectService storeOrderRejectService;
     private final StoreOrderAutoReadyService storeOrderAutoReadyService;
 
     public List<GetStoreOrderResponse> getNewOrders(String userEmail) {
@@ -145,22 +146,14 @@ public class StoreOrderService {
 
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void rejectOrder(Long storeOrderId, String username, String reason) {
         log.info("주문 거절 시작 - storeOrderId={}, username={}", storeOrderId, username);
         Store store = getStoreByOwner(username);
-        StoreOrder storeOrder = getStoreOrderWithOrderAndUser(storeOrderId);
 
-        validateStoreOwnership(storeOrder, store);
-
-        OrderStatus orderStatus = storeOrder.getOrder().getStatus();
-        validateOrderPaid(orderStatus);
-
-        storeOrder.requestReject();
-        storeOrderTtlService.removeAutoReject(storeOrderId);
-
-        paymentCancelService.cancel(new RefundTarget(
-                storeOrder.getOrder().getId(), storeOrder.getId(), storeOrder.getFinalPrice(), reason));
+        RefundTarget target = storeOrderRejectCommandService.requestRejectByOwner(
+                storeOrderId, store.getId(), reason);
+        storeOrderRejectService.reject(target);
 
         log.info("주문 거절 요청 완료(환불 처리 대기) - storeOrderId={}, reason={}", storeOrderId, reason);
     }
@@ -395,29 +388,22 @@ public class StoreOrderService {
      * Redis TTL 만료 시 호출. PENDING 주문 자동 거절 후 스토어 오너에게 목록 갱신 SSE 발송. 이미 다른 경로(스케줄러
      * 등)에서 거절된 경우에도 목록 갱신 SSE는 발송.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void processAutoRejectByTtl(Long storeOrderId) {
         log.info("[TTL][추적] processAutoRejectByTtl 진입 - storeOrderId={}", storeOrderId);
-        StoreOrder storeOrder = storeOrderRepository.findByIdWithOrderAndUser(storeOrderId).orElse(null);
-        if (storeOrder == null) {
-            log.warn("[TTL][추적] processAutoRejectByTtl - 주문 없음, 스킵 storeOrderId={}", storeOrderId);
-            return;
-        }
-        log.info("[TTL][추적] processAutoRejectByTtl - 현재 상태 status={}, storeOrderId={}", storeOrder.getStatus(),
-                storeOrderId);
-        if (storeOrder.getStatus() == StoreOrderStatus.PENDING) {
-            storeOrder.requestReject();
-            storeOrderTtlService.removeAutoReject(storeOrderId);
-            paymentCancelService.cancel(new RefundTarget(
-                    storeOrder.getOrder().getId(), storeOrder.getId(), storeOrder.getFinalPrice(), "자동 거절 (미응답)"));
+        RefundTarget target = storeOrderRejectCommandService.requestRejectIfPending(
+                storeOrderId, "자동 거절 (미응답)");
+        if (target != null) {
+            storeOrderRejectService.reject(target);
             log.info("[TTL][추적] processAutoRejectByTtl - REJECT_REQUESTED 반영 및 PG 환불 요청 완료 storeOrderId={}",
                     storeOrderId);
         } else {
-            log.info(
-                    "[TTL][추적] processAutoRejectByTtl - 이미 PENDING 아님(이미 거절/접수됨), DB 변경 없이 목록 갱신 SSE만 발송 storeOrderId={}, status={}",
-                    storeOrderId, storeOrder.getStatus());
+            log.info("[TTL][추적] 이미 PENDING 아님, DB 변경 없이 목록 갱신 SSE 만 발송 storeOrderId={}", storeOrderId);
         }
-        Long ownerId = storeOrder.getStore().getOwner().getId();
+        Long ownerId = storeOrderRejectCommandService.findOwnerId(storeOrderId);
+        if (ownerId == null) {
+            return;
+        }
         log.info("[TTL][추적] processAutoRejectByTtl - 스토어 오너 목록 갱신 SSE 발송 직전 ownerId={}, storeOrderId={}", ownerId,
                 storeOrderId);
         sseService.send(ownerId, SseEventType.STORE_ORDER_UPDATED, storeOrderId);
