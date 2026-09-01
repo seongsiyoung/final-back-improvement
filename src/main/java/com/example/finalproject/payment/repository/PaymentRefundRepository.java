@@ -85,8 +85,11 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
      * <p>PG_REJECTED 와 REJECTED 는 종결로 보고 제외한다. 관리자가 다시 시도하면
      * 그 이력을 덮어쓰지 않고 새 행을 만든다.
      *
-     * <p>Optional 이 성립하는 근거는 PaymentCommandService.startRefund 가 Payment 행에
-     * 비관적 락을 잡기 때문이다. 활성 건 검사와 생성이 그 락 안에서 직렬화된다.
+     * <p>Optional 이 성립하는 근거는 활성 건을 만드는 세 경로가 모두 Payment 행에
+     * 비관적 락을 먼저 잡기 때문이다 — PaymentCommandService.startRefund,
+     * StoreOrderRefundService.requestRefund, AdminRefundCommandService.retry.
+     * 활성 건 검사와 생성이 그 락 안에서 직렬화된다.
+     * 이 전제가 깨지면 활성 건이 둘이 되어 이 조회가 터진다.
      */
     @Query("SELECT pr FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.id = :storeOrderId "

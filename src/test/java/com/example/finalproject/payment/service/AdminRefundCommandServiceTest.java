@@ -55,13 +55,23 @@ class AdminRefundCommandServiceTest extends IntegrationTestSupport {
     private StoreCategoryRepository storeCategoryRepository;
 
     @Test
-    void retry_whenPgRejected_revertsToRequested() {
-        PaymentRefund refund = createRefundWithStatus(RefundStatus.PG_REJECTED);
+    @DisplayName("PG 거절된 환불을 다시 시도하면 종결 이력을 두고 새 시도를 만든다")
+    void retry_whenPgRejected_createsNewAttempt() {
+        PaymentRefund rejected = createRefundWithStatus(RefundStatus.PG_REJECTED);
+        Long storeOrderId = rejected.getStoreOrder().getId();
 
-        adminRefundCommandService.retry(refund.getId());
+        adminRefundCommandService.retry(rejected.getId());
 
-        PaymentRefund reloaded = paymentRefundRepository.findById(refund.getId()).orElseThrow();
-        assertThat(reloaded.getRefundStatus()).isEqualTo(RefundStatus.REQUESTED);
+        assertThat(paymentRefundRepository.findById(rejected.getId()).orElseThrow().getRefundStatus())
+                .as("종결된 금융 이력을 덮어쓰지 않는다")
+                .isEqualTo(RefundStatus.PG_REJECTED);
+        assertThat(paymentRefundRepository.findActiveByStoreOrderId(storeOrderId))
+                .isPresent()
+                .get()
+                .extracting(PaymentRefund::getRefundStatus)
+                .isEqualTo(RefundStatus.REQUESTED);
+        assertThat(storeOrderRepository.findById(storeOrderId).orElseThrow().getStatus())
+                .isEqualTo(StoreOrderStatus.REFUND_REQUESTED);
     }
 
     @Test
@@ -85,8 +95,8 @@ class AdminRefundCommandServiceTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("고객 취소에서 생긴 PG_REJECTED 는 관리자 환불 재시도 대상이 아니다")
-    void retry_whenStoreOrderIsNotRefundRequested_throws() {
+    @DisplayName("고객 취소에서 되살아난 PENDING 주문은 환불 재시도 대상이 아니다")
+    void retry_whenStoreOrderIsNotDelivered_throws() {
         PaymentRefund refund = createRefundWithStatus(RefundStatus.PG_REJECTED, StoreOrderStatus.PENDING);
 
         assertThatThrownBy(() -> adminRefundCommandService.retry(refund.getId()))
@@ -96,7 +106,7 @@ class AdminRefundCommandServiceTest extends IntegrationTestSupport {
     }
 
     private PaymentRefund createRefundWithStatus(RefundStatus status) {
-        return createRefundWithStatus(status, StoreOrderStatus.REFUND_REQUESTED);
+        return createRefundWithStatus(status, StoreOrderStatus.DELIVERED);
     }
 
     private PaymentRefund createRefundWithStatus(RefundStatus status, StoreOrderStatus storeOrderStatus) {
@@ -162,6 +172,7 @@ class AdminRefundCommandServiceTest extends IntegrationTestSupport {
                 .storeProductPrice(2000).deliveryFee(1000).finalPrice(3000)
                 .build());
         ReflectionTestUtils.setField(storeOrder, "status", storeOrderStatus);
+        ReflectionTestUtils.setField(storeOrder, "deliveredAt", LocalDateTime.now());
         storeOrderRepository.save(storeOrder);
 
         return paymentRefundRepository.save(PaymentRefund.builder()

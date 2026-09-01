@@ -123,11 +123,4 @@ public class PaymentRefund extends BaseTimeEntity {
     public void markPgRejected() {
         this.refundStatus = RefundStatus.PG_REJECTED;
     }
-
-    public void revertToRequested() {
-        if (this.refundStatus != RefundStatus.PG_REJECTED) {
-            throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
-        }
-        this.refundStatus = RefundStatus.REQUESTED;
-    }
 }

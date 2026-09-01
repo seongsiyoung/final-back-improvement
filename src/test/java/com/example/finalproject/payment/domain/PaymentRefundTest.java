@@ -28,46 +28,8 @@ class PaymentRefundTest {
         return refundWithStatus(RefundStatus.REQUESTED);
     }
 
-    @Test
-    void markPgRejected_fromRequested_setsStatusToPgRejected() {
-        PaymentRefund refund = requestedRefund();
 
-        refund.markPgRejected();
 
-        assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.PG_REJECTED);
-    }
-
-    @Test
-    void revertToRequested_fromPgRejected_setsStatusToRequested() {
-        PaymentRefund refund = requestedRefund();
-        refund.markPgRejected();
-
-        refund.revertToRequested();
-
-        assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.REQUESTED);
-    }
-
-    @ParameterizedTest
-    @EnumSource(value = RefundStatus.class, names = "PG_REJECTED", mode = EnumSource.Mode.EXCLUDE)
-    void revertToRequested_whenNotPgRejected_throwsBusinessExceptionWithInvalidRefundStatus(RefundStatus status) {
-        PaymentRefund refund = refundWithStatus(status);
-
-        assertThatThrownBy(refund::revertToRequested)
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.INVALID_REFUND_STATUS));
-    }
-
-    @Test
-    void revertToRequested_thenMarkPgRejectedAgain_allowsRepeatRetryCycle() {
-        PaymentRefund refund = requestedRefund();
-
-        refund.markPgRejected();
-        refund.revertToRequested();
-        refund.markPgRejected();
-
-        assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.PG_REJECTED);
-    }
 
     @Test
     void adminApprove_setsApprovedStatusAndAmount_withoutDeadSelfAssignment() {
