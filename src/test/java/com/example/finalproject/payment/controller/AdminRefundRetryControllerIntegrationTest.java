@@ -13,6 +13,7 @@ import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
@@ -34,6 +35,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -154,6 +156,10 @@ class AdminRefundRetryControllerIntegrationTest extends IntegrationTestSupport {
                 .deliveryFee(1000)
                 .finalPrice(3000)
                 .build());
+        // 관리자 환불 재시도는 환불 요청 상태의 주문에서만 일어난다.
+        ReflectionTestUtils.setField(storeOrder, "status", StoreOrderStatus.REFUND_REQUESTED);
+        storeOrderRepository.save(storeOrder);
+
         return paymentRefundRepository.save(PaymentRefund.builder()
                 .payment(payment)
                 .storeOrder(storeOrder)
