@@ -7,9 +7,12 @@ import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.service.pg.CancelResult;
 import com.example.finalproject.payment.service.pg.PaymentGateWay;
+import com.example.finalproject.payment.service.pg.PgCallOutcome;
+import com.example.finalproject.payment.service.pg.PgFailureClassifier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataAccessException;
 
 @Slf4j
 @Service
@@ -29,27 +32,51 @@ public class PaymentCancelService {
 
         paymentCommandService.startRefund(target);
 
-        CancelResult result;
+        CancelResult result = callPgCancel(payment, target);
+
+        paymentCommandService.markPgApproved(target.storeOrderId());
+
+        applyRefundOrFlag(target, result);
+    }
+
+    private CancelResult callPgCancel(Payment payment, RefundTarget target) {
         try {
             log.info("[PG_CANCEL_REQUEST] orderId={}, storeOrderId={}, amount={}",
-                    orderId, target.storeOrderId(), target.amount());
+                    target.orderId(), target.storeOrderId(), target.amount());
 
             String idempotencyKey = TossIdempotencyKeys.forStoreCancel(payment.getId(), target.storeOrderId());
-            result = paymentGateway.cancel(payment.getPaymentKey(), target.amount(), target.reason(), idempotencyKey);
-        } catch (Exception e) {
-            log.error("[PG_CANCEL_ERROR] orderId={}, paymentId={}, error={}",
-                    orderId, payment.getId(), e.getMessage(), e);
+            return paymentGateway.cancel(payment.getPaymentKey(), target.amount(), target.reason(), idempotencyKey);
+        } catch (RuntimeException e) {
+            PgCallOutcome outcome = PgFailureClassifier.classify(e);
 
-            paymentCommandService.revertRefundRequestAndMarkFailed(orderId, target.storeOrderId());
+            log.error("[PG_CANCEL_ERROR] orderId={}, paymentId={}, outcome={}, error={}",
+                    target.orderId(), payment.getId(), outcome, e.getMessage(), e);
+
+            if (outcome == PgCallOutcome.EXPLICIT_REJECTION) {
+                paymentCommandService.handleCancelRejection(target);
+            }
+
             throw new BusinessException(ErrorCode.PAYMENT_CANCEL_FAILED);
         }
+    }
 
-        paymentCommandService.applyRefund(
-                orderId,
-                target.storeOrderId(),
-                target.amount(),
-                target.reason(),
-                result.getCumulativeCanceledAmount()
-        );
+    private void applyRefundOrFlag(RefundTarget target, CancelResult result) {
+        try {
+            paymentCommandService.applyRefund(
+                    target.orderId(),
+                    target.storeOrderId(),
+                    target.amount(),
+                    target.reason(),
+                    result.getCumulativeCanceledAmount());
+        } catch (DataAccessException e) {
+            log.error("[REFUND_APPLY_DB_ERROR] orderId={}, storeOrderId={}",
+                    target.orderId(), target.storeOrderId(), e);
+            throw e;
+        } catch (BusinessException e) {
+            log.error("[REFUND_APPLY_RULE_ERROR] orderId={}, storeOrderId={}, code={}",
+                    target.orderId(), target.storeOrderId(), e.getErrorCode(), e);
+            paymentCommandService.markRefundReconciliationRequired(target);
+            throw e;
+        }
     }
 }
