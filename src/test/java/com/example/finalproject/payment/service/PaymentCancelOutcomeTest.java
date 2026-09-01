@@ -162,6 +162,10 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
 
         PaymentRefund refund = paymentRefundRepository.findByStoreOrderIdOrderByCreatedAtDesc(target.storeOrderId()).get(0);
         assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(refund.getRefundedAt())
+                .as("markPgApproved 를 거치지 않으면 APPROVED 인데 refundedAt 이 비어 "
+                        + "승인 집계와 정산 차감에서 통째로 빠진다")
+                .isNotNull();
     }
 
     private String newBuyerEmail() {

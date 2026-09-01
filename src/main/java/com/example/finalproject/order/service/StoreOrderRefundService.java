@@ -37,15 +37,18 @@ public class StoreOrderRefundService {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
 
+        // 활성 건 검사보다 먼저 Payment 행에 비관적 락을 잡는다.
+        // 이 락이 "한 주문에 진행 중인 환불은 하나"를 지키는 유일한 장치다.
+        // store_order_id UNIQUE 를 없앤 뒤로는 DB 가 중복을 막아주지 않는다.
+        Long orderId = storeOrder.getOrder().getId();
+        Payment payment = paymentRepository.findWithLockByOrder_Id(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+
         if (refundRepository.findActiveByStoreOrderId(storeOrderId).isPresent()) {
             throw new BusinessException(ErrorCode.REFUND_ALREADY_REQUESTED);
         }
 
         storeOrder.validateRefundRequestable();
-
-        Long orderId = storeOrder.getOrder().getId();
-        Payment payment = paymentRepository.findByOrder_Id(orderId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
         PaymentRefund refund = PaymentRefund.builder()
                 .payment(payment)

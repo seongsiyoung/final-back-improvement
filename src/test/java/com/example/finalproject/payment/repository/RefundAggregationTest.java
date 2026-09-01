@@ -36,16 +36,21 @@ class RefundAggregationTest extends IntegrationTestSupport {
     @Test
     @DisplayName("요청 금액 집계는 createdAt 기준이다 — 거절된 건은 refundedAt 이 없다")
     void sumRequested_usesCreatedAt() {
-        refundScenarioSeeder.refundRequested(newBuyerEmail());
         LocalDateTime from = LocalDateTime.now().minusDays(1);
         LocalDateTime to = LocalDateTime.now().plusDays(1);
+        // 이 쿼리는 상점·주문 필터가 없어 다른 테스트가 남긴 행까지 센다.
+        // 시드 전후의 증가분만 비교해야 계약을 고정할 수 있다.
+        long before = paymentRefundRepository
+                .sumRefundAmountByRefundStatusAndCreatedAtBetween(RefundStatus.REQUESTED, from, to);
+
+        RefundTarget seeded = refundScenarioSeeder.refundRequested(newBuyerEmail());
 
         long byCreatedAt = paymentRefundRepository
                 .sumRefundAmountByRefundStatusAndCreatedAtBetween(RefundStatus.REQUESTED, from, to);
         long byRefundedAt = paymentRefundRepository
                 .sumRefundAmountByRefundStatusAndRefundedAtBetween(RefundStatus.REQUESTED, from, to);
 
-        assertThat(byCreatedAt).isPositive();
+        assertThat(byCreatedAt - before).isEqualTo(seeded.amount());
         assertThat(byRefundedAt)
                 .as("REQUESTED 는 refundedAt 이 없으므로 이 기준으로는 항상 0 이다")
                 .isZero();

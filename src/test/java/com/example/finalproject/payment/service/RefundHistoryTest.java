@@ -10,7 +10,9 @@ import static org.mockito.Mockito.when;
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.RefundStatus;
+import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
+import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.service.pg.CancelResult;
 import com.example.finalproject.payment.service.pg.PaymentGateWay;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
@@ -26,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.dao.IncorrectResultSizeDataAccessException;
 
 class RefundHistoryTest extends IntegrationTestSupport {
 
@@ -35,6 +38,10 @@ class RefundHistoryTest extends IntegrationTestSupport {
     private PaymentRefundRepository paymentRefundRepository;
     @Autowired
     private RefundScenarioSeeder refundScenarioSeeder;
+    @Autowired
+    private PaymentRepository paymentRepository;
+    @Autowired
+    private StoreOrderRepository storeOrderRepository;
     @MockBean
     private PaymentGateWay paymentGateWay;
 
@@ -93,6 +100,26 @@ class RefundHistoryTest extends IntegrationTestSupport {
                 .get()
                 .extracting(PaymentRefund::getRefundStatus)
                 .isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    @DisplayName("활성 건이 둘이면 조회가 터진다 — UNIQUE 를 없앤 자리를 Payment 락이 대신한다")
+    void twoActiveRefunds_breakActiveLookup() {
+        RefundTarget target = refundScenarioSeeder.refundRequested(newBuyerEmail());
+
+        // 락 없이 중복 생성이 일어났을 때 어떤 일이 생기는지 고정한다.
+        // store_order_id UNIQUE 를 없앤 뒤로 이 상태를 막는 것은
+        // StoreOrderRefundService 와 PaymentCommandService 가 잡는 Payment 행 락뿐이다.
+        paymentRefundRepository.save(PaymentRefund.builder()
+                .payment(paymentRepository.findByOrder_Id(target.orderId()).orElseThrow())
+                .storeOrder(storeOrderRepository.findById(target.storeOrderId()).orElseThrow())
+                .refundAmount(target.amount())
+                .refundReason("중복 요청")
+                .refundStatus(RefundStatus.REQUESTED)
+                .build());
+
+        assertThatThrownBy(() -> paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId()))
+                .isInstanceOf(IncorrectResultSizeDataAccessException.class);
     }
 
     private String newBuyerEmail() {
