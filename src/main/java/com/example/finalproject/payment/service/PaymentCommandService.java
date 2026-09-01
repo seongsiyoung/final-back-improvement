@@ -115,6 +115,39 @@ public class PaymentCommandService {
                 .ifPresent(PaymentRefund::markPgRejected);
     }
 
+    @Transactional
+    public void handleCancelNotSent(RefundTarget target) {
+        Payment payment = findPaymentWithLock(target.orderId());
+        StoreOrder storeOrder = storeOrderRepository.findById(target.storeOrderId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORE_ORDER_NOT_FOUND));
+
+        switch (storeOrder.getStatus()) {
+            case CANCEL_REQUESTED -> {
+                storeOrder.revertCancelRequest();
+                payment.revertRefundRequest();
+            }
+            case REFUND_REQUESTED -> {
+                storeOrder.revertRefundRequest();
+                payment.revertRefundRequest();
+            }
+            case REJECT_REQUESTED -> {
+                storeOrder.revertRejectRequest();
+                payment.revertRefundRequest();
+            }
+            default -> {
+                log.error("[CANCEL_NOT_SENT_STATE_MISMATCH] storeOrderId={}, status={}",
+                        target.storeOrderId(), storeOrder.getStatus());
+                payment.markReconciliationRequired();
+                paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId())
+                        .ifPresent(PaymentRefund::markReconciliationRequired);
+                return;
+            }
+        }
+
+        paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId())
+                .ifPresent(PaymentRefund::revertPgPendingToRequested);
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markPgApproved(Long storeOrderId) {
         paymentRefundRepository.findByStoreOrder_Id(storeOrderId)

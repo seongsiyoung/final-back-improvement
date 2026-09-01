@@ -100,6 +100,16 @@ class PaymentRefundTest {
     }
 
     @Test
+    @DisplayName("PG 호출이 나가지 않았으면 PG_PENDING 을 REQUESTED 로 되돌린다")
+    void revertPgPendingToRequested() {
+        PaymentRefund refund = refundWithStatus(RefundStatus.PG_PENDING);
+
+        refund.revertPgPendingToRequested();
+
+        assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
     @DisplayName("RECONCILIATION_REQUIRED 는 어느 상태에서든 기록할 수 있다")
     void markReconciliationRequired_hasNoGuard() {
         PaymentRefund refund = refundWithStatus(RefundStatus.PG_APPROVED);

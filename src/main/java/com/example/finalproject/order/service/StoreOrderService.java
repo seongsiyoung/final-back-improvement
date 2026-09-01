@@ -213,6 +213,7 @@ public class StoreOrderService {
      * 프론트에서의 타이머 의존도를 줄이고, 사장님이 대시보드를 보고 있지 않아도 백엔드 기준으로 상태가 일관되게 유지되도록 한다.
      */
     @Scheduled(fixedDelay = 300_000L)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void processTimedOutStoreOrders() {
         LocalDateTime now = LocalDateTime.now();
 

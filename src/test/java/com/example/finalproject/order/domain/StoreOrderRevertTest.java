@@ -54,4 +54,14 @@ class StoreOrderRevertTest {
         assertThatThrownBy(storeOrder::revertRefundRequest)
                 .isInstanceOf(BusinessException.class);
     }
+
+    @Test
+    @DisplayName("REJECT_REQUESTED 는 PENDING 으로 되돌아간다")
+    void revertRejectRequest_goesToPending() {
+        StoreOrder storeOrder = storeOrderWith(StoreOrderStatus.REJECT_REQUESTED);
+
+        storeOrder.revertRejectRequest();
+
+        assertThat(storeOrder.getStatus()).isEqualTo(StoreOrderStatus.PENDING);
+    }
 }

@@ -13,6 +13,7 @@ import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.service.RefundTarget;
 import com.example.finalproject.payment.service.pg.PaymentGateWay;
+import com.example.finalproject.payment.service.pg.CancelResult;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.RefundScenarioSeeder;
 import feign.FeignException;
@@ -25,11 +26,17 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 class StoreOrderRejectTransactionTest extends IntegrationTestSupport {
 
     @Autowired
     private StoreOrderRejectService storeOrderRejectService;
+    @Autowired
+    private StoreOrderService storeOrderService;
     @Autowired
     private StoreOrderRejectCommandService rejectCommandService;
     @Autowired
@@ -38,6 +45,8 @@ class StoreOrderRejectTransactionTest extends IntegrationTestSupport {
     private PaymentRepository paymentRepository;
     @Autowired
     private RefundScenarioSeeder refundScenarioSeeder;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
     @MockBean
     private PaymentGateWay paymentGateWay;
 
@@ -72,6 +81,24 @@ class StoreOrderRejectTransactionTest extends IntegrationTestSupport {
 
         assertThat(storeOrderRepository.findById(seed.storeOrderId()).orElseThrow().getStatus())
                 .isEqualTo(StoreOrderStatus.REJECT_REQUESTED);
+    }
+
+    @Test
+    @DisplayName("스케줄 자동 거절은 PG 호출 전에 트랜잭션을 끝낸다")
+    void scheduledAutoReject_callsPgOutsideTransaction() {
+        RefundTarget seed = refundScenarioSeeder.approvedWithPendingStoreOrder(newBuyerEmail());
+        jdbcTemplate.update("update store_orders set created_at = ? where id = ?",
+                LocalDateTime.now().minusMinutes(6), seed.storeOrderId());
+        AtomicBoolean transactionActiveAtPgCall = new AtomicBoolean(true);
+        when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
+                .thenAnswer(invocation -> {
+                    transactionActiveAtPgCall.set(TransactionSynchronizationManager.isActualTransactionActive());
+                    return new CancelResult(seed.amount());
+                });
+
+        storeOrderService.processTimedOutStoreOrders();
+
+        assertThat(transactionActiveAtPgCall).isFalse();
     }
 
     private String newBuyerEmail() {

@@ -24,6 +24,8 @@ import feign.Request;
 import feign.Request.HttpMethod;
 import feign.RequestTemplate;
 import feign.RetryableException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
@@ -128,6 +130,25 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
                 .isEqualTo(PaymentStatus.REFUND_REQUESTED);
         assertThat(paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow().getRefundStatus())
                 .isEqualTo(RefundStatus.PG_PENDING);
+    }
+
+    @Test
+    @DisplayName("PG 호출이 나가지 않았으면 요청 상태를 되돌려 다시 취소 요청할 수 있다")
+    void notSent_revertsToRetryableState() {
+        RefundTarget target = refundScenarioSeeder.cancelRequested(newBuyerEmail());
+        CircuitBreaker breaker = CircuitBreaker.ofDefaults("toss-payment");
+        when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
+                .thenThrow(CallNotPermittedException.createCallNotPermittedException(breaker));
+
+        assertThatThrownBy(() -> paymentCancelService.cancel(target))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(storeOrderRepository.findById(target.storeOrderId()).orElseThrow().getStatus())
+                .isEqualTo(StoreOrderStatus.PENDING);
+        assertThat(paymentRepository.findByOrder_Id(target.orderId()).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.APPROVED);
+        assertThat(paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow().getRefundStatus())
+                .isEqualTo(RefundStatus.REQUESTED);
     }
 
     @Test

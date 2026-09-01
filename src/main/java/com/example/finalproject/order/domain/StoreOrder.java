@@ -270,6 +270,13 @@ public class StoreOrder extends BaseTimeEntity {
         this.status = StoreOrderStatus.DELIVERED;
     }
 
+    public void revertRejectRequest() {
+        if (this.status != StoreOrderStatus.REJECT_REQUESTED) {
+            throw new BusinessException(ErrorCode.INVALID_STORE_ORDER_STATUS);
+        }
+        this.status = StoreOrderStatus.PENDING;
+    }
+
     /**
      * 마트 정산 완료 처리 — Settlement FK 연결 및 isSettled 플래그 설정
      */
