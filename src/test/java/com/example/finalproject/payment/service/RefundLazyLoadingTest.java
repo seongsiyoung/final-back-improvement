@@ -65,7 +65,7 @@ class RefundLazyLoadingTest extends IntegrationTestSupport {
     @DisplayName("관리자 환불 승인이 트랜잭션 밖 LAZY 접근으로 터지지 않는다")
     void approveAndCancel_doesNotTouchLazyAssociationOutsideTransaction() {
         Long storeOrderId = refundScenarioSeeder.refundRequested(newBuyerEmail()).storeOrderId();
-        Long refundId = paymentRefundRepository.findByStoreOrder_Id(storeOrderId).orElseThrow().getId();
+        Long refundId = paymentRefundRepository.findActiveByStoreOrderId(storeOrderId).orElseThrow().getId();
         when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
                 .thenReturn(new CancelResult(3000));
         PostPaymentRefundApproveRequest request = new PostPaymentRefundApproveRequest();

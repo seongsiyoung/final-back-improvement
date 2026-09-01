@@ -66,7 +66,7 @@ public class PaymentCommandService {
 
         payment.markRefundRequested();
 
-        paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId())
+        paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
                 .ifPresentOrElse(
                         PaymentRefund::markPgPending,
                         () -> createPgPendingRefund(payment, target));
@@ -111,13 +111,13 @@ public class PaymentCommandService {
             }
         }
 
-        paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId())
+        paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
                 .ifPresent(PaymentRefund::markPgRejected);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markPgApproved(Long storeOrderId) {
-        paymentRefundRepository.findByStoreOrder_Id(storeOrderId)
+        paymentRefundRepository.findActiveByStoreOrderId(storeOrderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND))
                 .markPgApproved();
     }
@@ -125,7 +125,7 @@ public class PaymentCommandService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markRefundReconciliationRequired(RefundTarget target) {
         findPaymentWithLock(target.orderId()).markReconciliationRequired();
-        paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId())
+        paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
                 .ifPresent(PaymentRefund::markReconciliationRequired);
     }
 
@@ -173,7 +173,7 @@ public class PaymentCommandService {
     }
 
     private void saveRefundHistory(Long storeOrderId, Integer cancelAmount) {
-        PaymentRefund refund = paymentRefundRepository.findByStoreOrder_Id(storeOrderId)
+        PaymentRefund refund = paymentRefundRepository.findActiveByStoreOrderId(storeOrderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND));
         refund.adminApprove(cancelAmount);
     }

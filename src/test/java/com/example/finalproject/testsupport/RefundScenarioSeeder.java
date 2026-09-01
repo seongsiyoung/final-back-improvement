@@ -25,6 +25,7 @@ import com.example.finalproject.user.domain.User;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @Component
@@ -135,6 +136,34 @@ public class RefundScenarioSeeder {
         storeOrder.requestReject();
         storeOrderRepository.save(storeOrder);
         return targetOf(storeOrder, "자동 거절 (미응답)");
+    }
+
+    /** 종결된 환불 이력(PG_REJECTED) 한 건만 있고 활성 건은 없는 주문. */
+    public RefundTarget withClosedRefundHistory(String buyerEmail) {
+        StoreOrder storeOrder = createApprovedPaymentWithStoreOrder(buyerEmail);
+        Payment payment = paymentRepository.findByOrder_Id(storeOrder.getOrder().getId()).orElseThrow();
+        PaymentRefund closed = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrder)
+                .refundAmount(storeOrder.getFinalPrice())
+                .refundReason("고객 변심")
+                .refundStatus(RefundStatus.PG_PENDING)
+                .build();
+        closed.markPgRejected();
+        paymentRefundRepository.save(closed);
+        return targetOf(storeOrder, "고객 변심");
+    }
+
+    /** 되살아난 PENDING 주문에 취소를 다시 요청한다. */
+    @Transactional
+    public RefundTarget requestCancelAgain(RefundTarget previous) {
+        StoreOrder storeOrder = storeOrderRepository.findById(previous.storeOrderId()).orElseThrow();
+        storeOrder.requestCancel();
+        return new RefundTarget(
+                previous.orderId(),
+                previous.storeOrderId(),
+                previous.amount(),
+                previous.reason());
     }
 
     private StoreOrder createApprovedPaymentWithStoreOrder(String buyerEmail) {

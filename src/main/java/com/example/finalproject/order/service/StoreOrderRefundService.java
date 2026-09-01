@@ -37,7 +37,7 @@ public class StoreOrderRefundService {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
 
-        if (refundRepository.existsByStoreOrder_Id(storeOrderId)) {
+        if (refundRepository.findActiveByStoreOrderId(storeOrderId).isPresent()) {
             throw new BusinessException(ErrorCode.REFUND_ALREADY_REQUESTED);
         }
 

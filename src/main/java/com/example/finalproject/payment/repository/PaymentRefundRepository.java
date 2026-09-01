@@ -4,6 +4,7 @@ import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,6 +14,14 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Long> {
+
+    /** 아직 종결되지 않은 환불 상태. 활성 건이 하나임을 앱 가드가 지킨다. */
+    List<RefundStatus> ACTIVE_REFUND_STATUSES = List.of(
+            RefundStatus.REQUESTED,
+            RefundStatus.PG_PENDING,
+            RefundStatus.PG_APPROVED,
+            RefundStatus.RECONCILIATION_REQUIRED);
+
     List<PaymentRefund> findByStoreOrderIdOrderByCreatedAtDesc(Long storeOrderId);
 
     @Query(value = "SELECT r FROM PaymentRefund r " +
@@ -60,9 +69,25 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
             @Param("start") LocalDateTime start,
             @Param("end") LocalDateTime end);
 
-    boolean existsByStoreOrder_Id(Long storeOrderId);
+    /**
+     * 아직 종결되지 않은 환불 한 건을 찾는다.
+     *
+     * <p>PG_REJECTED 와 REJECTED 는 종결로 보고 제외한다. 관리자가 다시 시도하면
+     * 그 이력을 덮어쓰지 않고 새 행을 만든다.
+     *
+     * <p>Optional 이 성립하는 근거는 PaymentCommandService.startRefund 가 Payment 행에
+     * 비관적 락을 잡기 때문이다. 활성 건 검사와 생성이 그 락 안에서 직렬화된다.
+     */
+    @Query("SELECT pr FROM PaymentRefund pr "
+            + "WHERE pr.storeOrder.id = :storeOrderId "
+            + "AND pr.refundStatus IN (:activeStatuses)")
+    Optional<PaymentRefund> findActiveByStoreOrderId(
+            @Param("storeOrderId") Long storeOrderId,
+            @Param("activeStatuses") Collection<RefundStatus> activeStatuses);
 
-    Optional<PaymentRefund> findByStoreOrder_Id(Long storeOrderId);
+    default Optional<PaymentRefund> findActiveByStoreOrderId(Long storeOrderId) {
+        return findActiveByStoreOrderId(storeOrderId, ACTIVE_REFUND_STATUSES);
+    }
 
     @Query("SELECT pr.storeOrder.id, COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "

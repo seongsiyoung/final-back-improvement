@@ -35,7 +35,7 @@ class PaymentRefundStartTest extends IntegrationTestSupport {
         paymentCommandService.startRefund(target);
 
         Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
-        PaymentRefund refund = paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow();
+        PaymentRefund refund = paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId()).orElseThrow();
 
         assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.REFUND_REQUESTED);
         assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.PG_PENDING);
@@ -49,7 +49,7 @@ class PaymentRefundStartTest extends IntegrationTestSupport {
 
         paymentCommandService.startRefund(target);
 
-        PaymentRefund refund = paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow();
+        PaymentRefund refund = paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId()).orElseThrow();
         assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.PG_PENDING);
     }
 

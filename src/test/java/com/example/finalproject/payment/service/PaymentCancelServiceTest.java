@@ -95,7 +95,7 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
         Payment reloadedPayment = paymentRepository.findById(payment.getId()).orElseThrow();
         assertThat(reloadedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.REFUND_REQUESTED);
 
-        PaymentRefund reloadedRefund = paymentRefundRepository.findByStoreOrder_Id(storeOrder.getId()).orElseThrow();
+        PaymentRefund reloadedRefund = paymentRefundRepository.findActiveByStoreOrderId(storeOrder.getId()).orElseThrow();
         assertThat(reloadedRefund.getRefundStatus()).isEqualTo(RefundStatus.PG_PENDING);
         assertThat(storeOrderRepository.findById(storeOrder.getId()).orElseThrow().getStatus())
                 .isEqualTo(com.example.finalproject.order.enums.StoreOrderStatus.CANCEL_REQUESTED);

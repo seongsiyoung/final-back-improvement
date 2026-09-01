@@ -19,7 +19,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -27,8 +26,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "payment_refunds",
-        uniqueConstraints = @UniqueConstraint(name = "uq_refunds_store_order", columnNames = "store_order_id"))
+@Table(name = "payment_refunds")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PaymentRefund extends BaseTimeEntity {

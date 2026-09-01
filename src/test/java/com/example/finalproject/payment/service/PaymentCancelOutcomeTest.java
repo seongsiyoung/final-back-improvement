@@ -78,7 +78,7 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
                 .isEqualTo(StoreOrderStatus.PENDING);
         assertThat(paymentRepository.findByOrder_Id(target.orderId()).orElseThrow().getPaymentStatus())
                 .isEqualTo(PaymentStatus.APPROVED);
-        assertThat(paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow().getRefundStatus())
+        assertThat(paymentRefundRepository.findByStoreOrderIdOrderByCreatedAtDesc(target.storeOrderId()).get(0).getRefundStatus())
                 .isEqualTo(RefundStatus.PG_REJECTED);
     }
 
@@ -128,7 +128,7 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
                 .isEqualTo(StoreOrderStatus.CANCEL_REQUESTED);
         assertThat(paymentRepository.findByOrder_Id(target.orderId()).orElseThrow().getPaymentStatus())
                 .isEqualTo(PaymentStatus.REFUND_REQUESTED);
-        assertThat(paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow().getRefundStatus())
+        assertThat(paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId()).orElseThrow().getRefundStatus())
                 .isEqualTo(RefundStatus.PG_PENDING);
     }
 
@@ -147,7 +147,7 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
                 .isEqualTo(StoreOrderStatus.CANCEL_REQUESTED);
         assertThat(paymentRepository.findByOrder_Id(target.orderId()).orElseThrow().getPaymentStatus())
                 .isEqualTo(PaymentStatus.REFUND_REQUESTED);
-        assertThat(paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow().getRefundStatus())
+        assertThat(paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId()).orElseThrow().getRefundStatus())
                 .isEqualTo(RefundStatus.PG_PENDING);
     }
 
@@ -160,7 +160,7 @@ class PaymentCancelOutcomeTest extends IntegrationTestSupport {
 
         paymentCancelService.cancel(target);
 
-        PaymentRefund refund = paymentRefundRepository.findByStoreOrder_Id(target.storeOrderId()).orElseThrow();
+        PaymentRefund refund = paymentRefundRepository.findByStoreOrderIdOrderByCreatedAtDesc(target.storeOrderId()).get(0);
         assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.APPROVED);
     }
 
