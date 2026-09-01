@@ -50,6 +50,7 @@ public class StoreOrderRefundService {
         PaymentRefund refund = PaymentRefund.builder()
                 .payment(payment)
                 .storeOrder(storeOrder)
+                .refundAmount(storeOrder.getFinalPrice())
                 .refundReason(request.getReason())
                 .refundStatus(RefundStatus.REQUESTED)
                 .build();

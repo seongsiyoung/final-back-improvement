@@ -7,6 +7,7 @@ import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -107,5 +108,47 @@ class PaymentRefundTest {
         refund.markReconciliationRequired();
 
         assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.RECONCILIATION_REQUIRED);
+    }
+
+    @Test
+    @DisplayName("생성 직후에는 환불 확인 시각이 없다 — 요청 시각은 createdAt 이다")
+    void newRefund_hasNoRefundedAt() {
+        PaymentRefund refund = requestedRefund();
+
+        assertThat(refund.getRefundedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("PG 환불이 확인되면 그때 환불 시각을 찍는다")
+    void markPgApproved_stampsRefundedAt() {
+        PaymentRefund refund = refundWithStatus(RefundStatus.PG_PENDING);
+
+        refund.markPgApproved();
+
+        assertThat(refund.getRefundedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("장부 반영은 환불 확인 시각을 덮어쓰지 않는다")
+    void adminApprove_doesNotOverwriteRefundedAt() {
+        PaymentRefund refund = refundWithStatus(RefundStatus.PG_PENDING);
+        refund.markPgApproved();
+        LocalDateTime stampedAt = refund.getRefundedAt();
+
+        refund.adminApprove(3000);
+
+        assertThat(refund.getRefundedAt()).isEqualTo(stampedAt);
+        assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(refund.getRefundAmount()).isEqualTo(3000);
+    }
+
+    @Test
+    @DisplayName("거절된 환불에는 환불 시각이 남지 않는다")
+    void rejectedRefund_hasNoRefundedAt() {
+        PaymentRefund refund = requestedRefund();
+
+        refund.adminReject();
+
+        assertThat(refund.getRefundedAt()).isNull();
     }
 }

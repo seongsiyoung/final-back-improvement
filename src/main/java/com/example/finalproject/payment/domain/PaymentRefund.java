@@ -80,15 +80,17 @@ public class PaymentRefund extends BaseTimeEntity {
         this.refundAmount = refundAmount;
         this.refundReason = refundReason;
         this.refundStatus = refundStatus != null ? refundStatus : RefundStatus.REQUESTED;
-        this.refundedAt = LocalDateTime.now();
         this.responsibility = responsibility;
         this.isSettled = isSettled;
     }
 
+    /**
+     * PG 환불 확인 후 로컬 장부에 반영한다.
+     * refundedAt 은 건드리지 않는다 — 환불이 확인된 시각은 markPgApproved 가 찍는다.
+     */
     public void adminApprove(int refundAmount) {
         this.refundAmount = refundAmount;
         this.refundStatus = RefundStatus.APPROVED;
-        this.refundedAt = LocalDateTime.now();
     }
 
     public void confirmRefundDetails(RefundResponsibility responsibility, int refundAmount) {
@@ -100,6 +102,10 @@ public class PaymentRefund extends BaseTimeEntity {
         this.refundStatus = RefundStatus.REJECTED;
     }
 
+    /**
+     * PG 는 취소했고 로컬 장부 반영만 남았다.
+     * refundedAt 은 여기서만 찍는다 — 기간별 환불 집계의 기준 시각이다.
+     */
     public void markPgApproved() {
         this.refundStatus = RefundStatus.PG_APPROVED;
         this.refundedAt = LocalDateTime.now();

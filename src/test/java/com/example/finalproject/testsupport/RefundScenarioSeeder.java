@@ -122,6 +122,14 @@ public class RefundScenarioSeeder {
         return targetOf(storeOrder, "고객 변심");
     }
 
+    public RefundTarget deliveredStoreOrder(String buyerEmail) {
+        StoreOrder storeOrder = createApprovedPaymentWithStoreOrder(buyerEmail);
+        ReflectionTestUtils.setField(storeOrder, "deliveredAt", LocalDateTime.now());
+        ReflectionTestUtils.setField(storeOrder, "status", StoreOrderStatus.DELIVERED);
+        storeOrderRepository.save(storeOrder);
+        return targetOf(storeOrder, "고객 변심");
+    }
+
     public RefundTarget rejectRequested(String buyerEmail) {
         StoreOrder storeOrder = createApprovedPaymentWithStoreOrder(buyerEmail);
         storeOrder.requestReject();
