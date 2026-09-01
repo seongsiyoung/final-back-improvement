@@ -91,15 +91,18 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
     }
 
     @Test
-    void retryingSameCycle_producesSameApproveIdempotencyKey() {
+    void retryingSameCycle_withPendingPayment_throwsWithoutCreatingNewRow() {
         Subscription subscription = createActiveSubscriptionFixture();
 
-        var firstAttempt = subscriptionChargeCommandService.startCharge(subscription.getId());
-        var secondAttempt = subscriptionChargeCommandService.startCharge(subscription.getId());
+        subscriptionChargeCommandService.startCharge(subscription.getId());
+        long countBefore = subscriptionPaymentRepository.count();
 
-        assertThat(firstAttempt.nextPaymentDate()).isEqualTo(secondAttempt.nextPaymentDate());
-        assertThat(TossIdempotencyKeys.forBillingApprove(subscription.getId(), firstAttempt.nextPaymentDate()))
-                .isEqualTo(TossIdempotencyKeys.forBillingApprove(subscription.getId(), secondAttempt.nextPaymentDate()));
+        assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ALREADY_PROCESSED_PAYMENT));
+
+        assertThat(subscriptionPaymentRepository.count()).isEqualTo(countBefore);
     }
 
     @Test
@@ -114,6 +117,40 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
 
         assertThat(TossIdempotencyKeys.forBillingApprove(subscription.getId(), beforeAdvance.nextPaymentDate()))
                 .isNotEqualTo(TossIdempotencyKeys.forBillingApprove(subscription.getId(), afterAdvance.nextPaymentDate()));
+    }
+
+    @Test
+    void startCharge_whenReversalPendingExistsForCycle_throws() {
+        Subscription subscription = createActiveSubscriptionFixture();
+        SubscriptionPayment payment = newPayment(subscription, "SUB-REVERSAL-");
+        payment.markReversalPending();
+        subscriptionPaymentRepository.save(payment);
+
+        assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void startCharge_whenReconciliationRequiredExistsForCycle_throws() {
+        Subscription subscription = createActiveSubscriptionFixture();
+        SubscriptionPayment payment = newPayment(subscription, "SUB-RECONCILE-");
+        payment.markReconciliationRequired();
+        subscriptionPaymentRepository.save(payment);
+
+        assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    private SubscriptionPayment newPayment(Subscription subscription, String orderPrefix) {
+        return SubscriptionPayment.builder()
+                .subscription(subscription)
+                .paymentMethod(PaymentMethodType.CARD)
+                .amount(subscription.getTotalAmount())
+                .pgOrderId(orderPrefix + System.nanoTime())
+                .pgProvider("TOSS")
+                .paymentStatus(PaymentStatus.PENDING)
+                .billingCycleDate(subscription.getNextPaymentDate())
+                .build();
     }
 
     private Subscription createActiveSubscriptionFixture() {

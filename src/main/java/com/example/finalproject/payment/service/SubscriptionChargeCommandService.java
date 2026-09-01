@@ -15,6 +15,7 @@ import com.example.finalproject.subscription.repository.SubscriptionRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +23,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class SubscriptionChargeCommandService {
+
+    private static final List<PaymentStatus> UNRESOLVED_STATUSES = List.of(
+            PaymentStatus.APPROVED,
+            PaymentStatus.PENDING,
+            PaymentStatus.REVERSAL_PENDING,
+            PaymentStatus.RECONCILIATION_REQUIRED);
 
     private final SubscriptionRepository subscriptionRepository;
     private final SubscriptionPaymentRepository subscriptionPaymentRepository;
@@ -48,8 +55,8 @@ public class SubscriptionChargeCommandService {
         // 확정된 결정" 참고 — nextPaymentDate가 실패 시에는 전진하지 않아 DB
         // UNIQUE(subscription_id, billing_cycle_date)를 걸면 정상적인 재시도까지
         // 막아버린다.
-        if (subscriptionPaymentRepository.existsBySubscription_IdAndBillingCycleDateAndPaymentStatus(
-                subscriptionId, billingCycleDate, PaymentStatus.APPROVED)) {
+        if (subscriptionPaymentRepository.existsBySubscription_IdAndBillingCycleDateAndPaymentStatusIn(
+                subscriptionId, billingCycleDate, UNRESOLVED_STATUSES)) {
             throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
         }
 
@@ -97,6 +104,27 @@ public class SubscriptionChargeCommandService {
     @Transactional
     public void failCharge(Long subscriptionPaymentId) {
         subscriptionPaymentRepository.findById(subscriptionPaymentId)
+                .ifPresent(SubscriptionPayment::fail);
+    }
+
+    @Transactional
+    public void markReversalPending(Long subscriptionPaymentId) {
+        subscriptionPaymentRepository.findById(subscriptionPaymentId)
+                .filter(payment -> payment.getPaymentStatus() == PaymentStatus.PENDING)
+                .ifPresent(SubscriptionPayment::markReversalPending);
+    }
+
+    @Transactional
+    public void markReconciliationRequired(Long subscriptionPaymentId) {
+        subscriptionPaymentRepository.findById(subscriptionPaymentId)
+                .filter(payment -> payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING)
+                .ifPresent(SubscriptionPayment::markReconciliationRequired);
+    }
+
+    @Transactional
+    public void failReversalPending(Long subscriptionPaymentId) {
+        subscriptionPaymentRepository.findById(subscriptionPaymentId)
+                .filter(payment -> payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING)
                 .ifPresent(SubscriptionPayment::fail);
     }
 

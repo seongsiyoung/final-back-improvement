@@ -1,6 +1,8 @@
 package com.example.finalproject.payment.domain;
 
 import com.example.finalproject.global.domain.BaseTimeEntity;
+import com.example.finalproject.global.exception.custom.BusinessException;
+import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.subscription.domain.Subscription;
@@ -107,5 +109,15 @@ public class SubscriptionPayment extends BaseTimeEntity {
     public void fail() {
         this.paymentStatus = PaymentStatus.FAILED;
     }
-}
 
+    public void markReversalPending() {
+        if (this.paymentStatus != PaymentStatus.PENDING) {
+            throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
+        }
+        this.paymentStatus = PaymentStatus.REVERSAL_PENDING;
+    }
+
+    public void markReconciliationRequired() {
+        this.paymentStatus = PaymentStatus.RECONCILIATION_REQUIRED;
+    }
+}
