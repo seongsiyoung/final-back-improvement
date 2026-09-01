@@ -27,7 +27,7 @@ public class PaymentCancelService {
         Payment payment = paymentRepository.findByOrder_Id(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
-        paymentCommandService.markRefundRequested(orderId);
+        paymentCommandService.startRefund(target);
 
         CancelResult result;
         try {
