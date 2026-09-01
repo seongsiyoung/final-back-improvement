@@ -40,12 +40,24 @@ public class RefundScenarioSeeder {
     private final ProductRepository productRepository;
 
     public ConfirmScenario readyPayment(String buyerEmail) {
-        Store store = loadTestDataSeeder.seedStoreWithProducts(1, 10);
+        return confirmScenario(buyerEmail, 10);
+    }
+
+    public ConfirmScenario outOfStockPayment(String buyerEmail) {
+        return confirmScenario(buyerEmail, 0);
+    }
+
+    private ConfirmScenario confirmScenario(String buyerEmail, int stock) {
+        Store store = loadTestDataSeeder.seedStoreWithProducts(1, stock);
         User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
         Product product = productRepository.findAll().stream()
                 .filter(candidate -> candidate.getStore().getId().equals(store.getId()))
                 .findFirst()
                 .orElseThrow();
+        if (stock == 0) {
+            ReflectionTestUtils.setField(product, "stock", 0);
+            productRepository.save(product);
+        }
         Order order = orderRepository.save(Order.builder()
                 .orderNumber("ORD-CS-" + System.nanoTime())
                 .user(buyer)

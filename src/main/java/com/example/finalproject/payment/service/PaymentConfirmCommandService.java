@@ -149,6 +149,24 @@ public class PaymentConfirmCommandService {
         }
     }
 
+    @Transactional
+    public void markReversalPending(Long paymentId) {
+        Payment payment = paymentRepository.findWithLockById(paymentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+        if (payment.getPaymentStatus() == PaymentStatus.PENDING) {
+            payment.markReversalPending();
+        }
+    }
+
+    @Transactional
+    public void markConfirmReconciliationRequired(Long paymentId) {
+        Payment payment = paymentRepository.findWithLockById(paymentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+        if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
+            payment.markReconciliationRequired();
+        }
+    }
+
     private List<StoreOrder> createStoreOrdersAndOrderProducts(Order order, List<OrderLine> lines) {
         Map<Long, List<OrderLine>> grouped = lines.stream()
                 .collect(Collectors.groupingBy(OrderLine::getStoreId));

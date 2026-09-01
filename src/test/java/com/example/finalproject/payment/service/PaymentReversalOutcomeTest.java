@@ -4,10 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.payment.client.TossPaymentsClient;
+import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
@@ -17,8 +18,6 @@ import feign.Request;
 import feign.Request.HttpMethod;
 import feign.RequestTemplate;
 import feign.RetryableException;
-import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
-import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
@@ -29,8 +28,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
+import org.springframework.test.util.ReflectionTestUtils;
 
-class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
+class PaymentReversalOutcomeTest extends IntegrationTestSupport {
 
     @Autowired private PaymentService paymentService;
     @Autowired private PaymentRepository paymentRepository;
@@ -38,7 +38,7 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
     @Autowired private CircuitBreakerFactory<?, ?> circuitBreakerFactory;
     @MockBean private TossPaymentsClient tossPaymentsClient;
 
-    private final Request request = Request.create(HttpMethod.POST, "/v1/payments/confirm",
+    private final Request request = Request.create(HttpMethod.POST, "/v1/payments/x/cancel",
             Collections.emptyMap(), new byte[0], StandardCharsets.UTF_8, new RequestTemplate());
 
     @BeforeEach
@@ -48,60 +48,69 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("읽기 타임아웃이면 PENDING으로 남긴다")
-    void readTimeout_keepsPending() {
-        RefundScenarioSeeder.ConfirmScenario scenario = readyPayment();
-        when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(readTimeout());
+    @DisplayName("보상 취소가 성공하면 FAILED가 된다")
+    void reversalSucceeds_marksFailed() {
+        RefundScenarioSeeder.ConfirmScenario scenario = outOfStockPayment();
+        when(tossPaymentsClient.confirm(any(), anyString())).thenReturn(doneResponse());
+        when(tossPaymentsClient.cancel(anyString(), any(), anyString())).thenReturn(mock());
 
         assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
                 .isInstanceOf(RuntimeException.class);
 
-        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.PENDING);
+        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.FAILED);
     }
 
     @Test
-    @DisplayName("PG가 명확히 거절하면 READY로 되돌린다")
-    void explicitRejection_revertsToReady() {
-        RefundScenarioSeeder.ConfirmScenario scenario = readyPayment();
-        when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(new FeignException.BadRequest(
-                "bad request", request, "{\"code\":\"REJECT_CARD_COMPANY\"}".getBytes(StandardCharsets.UTF_8),
+    @DisplayName("보상 취소 결과를 모르면 REVERSAL_PENDING으로 남긴다")
+    void reversalResultUnknown_keepsReversalPending() {
+        RefundScenarioSeeder.ConfirmScenario scenario = outOfStockPayment();
+        when(tossPaymentsClient.confirm(any(), anyString())).thenReturn(doneResponse());
+        when(tossPaymentsClient.cancel(anyString(), any(), anyString())).thenThrow(readTimeout());
+
+        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.REVERSAL_PENDING);
+    }
+
+    @Test
+    @DisplayName("PG가 보상 취소를 거절하면 RECONCILIATION_REQUIRED가 된다")
+    void reversalRejected_marksReconciliationRequired() {
+        RefundScenarioSeeder.ConfirmScenario scenario = outOfStockPayment();
+        when(tossPaymentsClient.confirm(any(), anyString())).thenReturn(doneResponse());
+        when(tossPaymentsClient.cancel(anyString(), any(), anyString())).thenThrow(new FeignException.BadRequest(
+                "bad request", request, "{\"code\":\"NOT_CANCELABLE_PAYMENT\"}".getBytes(StandardCharsets.UTF_8),
                 Collections.emptyMap()));
 
         assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
                 .isInstanceOf(RuntimeException.class);
 
-        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.READY);
+        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
     }
 
     @Test
-    @DisplayName("회로가 열려 요청이 안 나갔으면 READY로 되돌린다")
-    void circuitOpen_revertsToReady() {
-        RefundScenarioSeeder.ConfirmScenario scenario = readyPayment();
-        CircuitBreaker breaker = CircuitBreaker.ofDefaults("toss-payment");
-        when(tossPaymentsClient.confirm(any(), anyString()))
-                .thenThrow(CallNotPermittedException.createCallNotPermittedException(breaker));
+    @DisplayName("REVERSAL_PENDING은 취소 호출 전에 커밋된다")
+    void reversalPendingIsCommittedBeforeCancelCall() {
+        RefundScenarioSeeder.ConfirmScenario scenario = outOfStockPayment();
+        when(tossPaymentsClient.confirm(any(), anyString())).thenReturn(doneResponse());
+        when(tossPaymentsClient.cancel(anyString(), any(), anyString())).thenAnswer(invocation -> {
+            assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.REVERSAL_PENDING);
+            throw new RuntimeException("cancel call interrupted");
+        });
 
         assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
                 .isInstanceOf(RuntimeException.class);
-
-        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.READY);
     }
 
-    @Test
-    @DisplayName("PENDING으로 남은 결제는 다시 승인 요청할 수 없다")
-    void pendingPayment_cannotBeConfirmedAgain() {
-        RefundScenarioSeeder.ConfirmScenario scenario = readyPayment();
-        when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(readTimeout());
-
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
-
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(BusinessException.class);
+    private RefundScenarioSeeder.ConfirmScenario outOfStockPayment() {
+        return scenarioSeeder.outOfStockPayment("reversal-" + System.nanoTime() + "@test.com");
     }
 
-    private RefundScenarioSeeder.ConfirmScenario readyPayment() {
-        return scenarioSeeder.readyPayment("confirm-" + System.nanoTime() + "@test.com");
+    private TossConfirmResponse doneResponse() {
+        TossConfirmResponse response = new TossConfirmResponse();
+        ReflectionTestUtils.setField(response, "status", "DONE");
+        ReflectionTestUtils.setField(response, "paymentKey", "pg-payment-key");
+        return response;
     }
 
     private PaymentStatus statusOf(RefundScenarioSeeder.ConfirmScenario scenario) {
