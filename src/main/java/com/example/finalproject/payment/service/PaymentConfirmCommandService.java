@@ -140,6 +140,15 @@ public class PaymentConfirmCommandService {
         }
     }
 
+    @Transactional
+    public void failReversalPending(Long paymentId) {
+        Payment payment = paymentRepository.findWithLockById(paymentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+        if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
+            payment.fail();
+        }
+    }
+
     private List<StoreOrder> createStoreOrdersAndOrderProducts(Order order, List<OrderLine> lines) {
         Map<Long, List<OrderLine>> grouped = lines.stream()
                 .collect(Collectors.groupingBy(OrderLine::getStoreId));
