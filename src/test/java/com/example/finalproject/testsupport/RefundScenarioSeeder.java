@@ -2,13 +2,16 @@ package com.example.finalproject.testsupport;
 
 import com.example.finalproject.global.util.GeometryUtil;
 import com.example.finalproject.order.domain.Order;
+import com.example.finalproject.order.domain.OrderLine;
 import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.order.enums.OrderType;
 import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.order.repository.OrderRepository;
+import com.example.finalproject.order.repository.OrderLineRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.domain.PaymentRefund;
+import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.enums.RefundStatus;
@@ -16,6 +19,8 @@ import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.service.RefundTarget;
 import com.example.finalproject.store.domain.Store;
+import com.example.finalproject.product.domain.Product;
+import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.user.domain.User;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +36,49 @@ public class RefundScenarioSeeder {
     private final PaymentRepository paymentRepository;
     private final StoreOrderRepository storeOrderRepository;
     private final PaymentRefundRepository paymentRefundRepository;
+    private final OrderLineRepository orderLineRepository;
+    private final ProductRepository productRepository;
+
+    public ConfirmScenario readyPayment(String buyerEmail) {
+        Store store = loadTestDataSeeder.seedStoreWithProducts(1, 10);
+        User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
+        Product product = productRepository.findAll().stream()
+                .filter(candidate -> candidate.getStore().getId().equals(store.getId()))
+                .findFirst()
+                .orElseThrow();
+        Order order = orderRepository.save(Order.builder()
+                .orderNumber("ORD-CS-" + System.nanoTime())
+                .user(buyer)
+                .orderType(OrderType.REGULAR)
+                .totalProductPrice(product.getEffectivePrice())
+                .totalDeliveryFee(0)
+                .finalPrice(product.getEffectivePrice())
+                .deliveryAddress("서울시 강남구 테헤란로 123")
+                .deliveryLocation(GeometryUtil.createPoint(127.0276, 37.4979))
+                .orderedAt(LocalDateTime.now())
+                .build());
+        Payment payment = paymentRepository.save(Payment.builder()
+                .order(order)
+                .paymentMethod(PaymentMethodType.CARD)
+                .amount(order.getFinalPrice())
+                .paymentStatus(PaymentStatus.READY)
+                .pgOrderId("PG-CS-" + System.nanoTime())
+                .pgProvider("tosspayments")
+                .build());
+        orderLineRepository.save(OrderLine.builder()
+                .order(order)
+                .productId(product.getId())
+                .storeId(store.getId())
+                .priceSnapshot(product.getEffectivePrice())
+                .productNameSnapshot(product.getProductName())
+                .quantity(1)
+                .build());
+
+        PostPaymentConfirmRequest request = new PostPaymentConfirmRequest();
+        ReflectionTestUtils.setField(request, "paymentId", payment.getId());
+        ReflectionTestUtils.setField(request, "paymentKey", "confirm-key-" + System.nanoTime());
+        return new ConfirmScenario(buyerEmail, payment.getId(), request);
+    }
 
     public RefundTarget approvedWithPendingStoreOrder(String buyerEmail) {
         StoreOrder storeOrder = createApprovedPaymentWithStoreOrder(buyerEmail);
@@ -111,5 +159,8 @@ public class RefundScenarioSeeder {
                 storeOrder.getId(),
                 storeOrder.getFinalPrice(),
                 reason);
+    }
+
+    public record ConfirmScenario(String email, Long paymentId, PostPaymentConfirmRequest request) {
     }
 }

@@ -22,6 +22,8 @@ import com.example.finalproject.payment.config.TossCircuitBreakerFallback;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.PaymentRepository;
+import com.example.finalproject.payment.service.pg.PgCallOutcome;
+import com.example.finalproject.payment.service.pg.PgFailureClassifier;
 import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.user.domain.Address;
@@ -99,7 +101,12 @@ public class PaymentService {
             return circuitBreakerFactory.create("toss-payment")
                     .run(() -> tossPaymentsClient.confirm(confirmRequest, idempotencyKey), TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException e) {
-            paymentConfirmCommandService.revertPendingToReady(paymentId);
+            PgCallOutcome outcome = PgFailureClassifier.classify(e);
+            log.error("[PG_CONFIRM_ERROR] paymentId={}, outcome={}, error={}",
+                    paymentId, outcome, e.getMessage(), e);
+            if (outcome == PgCallOutcome.NOT_SENT || outcome == PgCallOutcome.EXPLICIT_REJECTION) {
+                paymentConfirmCommandService.revertPendingToReady(paymentId);
+            }
             throw e;
         }
     }
