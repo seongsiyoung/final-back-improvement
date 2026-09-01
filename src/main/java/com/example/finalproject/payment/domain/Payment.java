@@ -145,7 +145,23 @@ public class Payment extends BaseTimeEntity {
         this.paymentStatus = PaymentStatus.REFUND_REQUESTED;
     }
 
-    public void revertToPaid() {
-        this.paymentStatus = PaymentStatus.APPROVED;
+    public void markReversalPending() {
+        if (this.paymentStatus != PaymentStatus.PENDING) {
+            throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
+        }
+        this.paymentStatus = PaymentStatus.REVERSAL_PENDING;
+    }
+
+    public void markReconciliationRequired() {
+        this.paymentStatus = PaymentStatus.RECONCILIATION_REQUIRED;
+    }
+
+    public void revertRefundRequest() {
+        if (this.paymentStatus != PaymentStatus.REFUND_REQUESTED) {
+            throw new BusinessException(ErrorCode.INVALID_PAYMENT_CANCEL_STATUS);
+        }
+        this.paymentStatus = (this.refundedAmount == null || this.refundedAmount == 0)
+                ? PaymentStatus.APPROVED
+                : PaymentStatus.PARTIAL_REFUNDED;
     }
 }

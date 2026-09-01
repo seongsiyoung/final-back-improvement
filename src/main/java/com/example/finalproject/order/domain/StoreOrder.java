@@ -256,7 +256,17 @@ public class StoreOrder extends BaseTimeEntity {
         this.refundReason = reason;
     }
 
+    public void revertCancelRequest() {
+        if (this.status != StoreOrderStatus.CANCEL_REQUESTED) {
+            throw new BusinessException(ErrorCode.INVALID_STORE_ORDER_REFUND_STATUS);
+        }
+        this.status = StoreOrderStatus.PENDING;
+    }
+
     public void revertRefundRequest() {
+        if (this.status != StoreOrderStatus.REFUND_REQUESTED) {
+            throw new BusinessException(ErrorCode.INVALID_STORE_ORDER_REFUND_STATUS);
+        }
         this.status = StoreOrderStatus.DELIVERED;
     }
 

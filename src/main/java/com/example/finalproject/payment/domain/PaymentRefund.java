@@ -105,6 +105,17 @@ public class PaymentRefund extends BaseTimeEntity {
         this.refundedAt = LocalDateTime.now();
     }
 
+    public void markPgPending() {
+        if (this.refundStatus != RefundStatus.REQUESTED) {
+            throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
+        }
+        this.refundStatus = RefundStatus.PG_PENDING;
+    }
+
+    public void markReconciliationRequired() {
+        this.refundStatus = RefundStatus.RECONCILIATION_REQUIRED;
+    }
+
     public void markPgRejected() {
         this.refundStatus = RefundStatus.PG_REJECTED;
     }

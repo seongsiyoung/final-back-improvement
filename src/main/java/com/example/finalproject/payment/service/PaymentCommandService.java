@@ -73,7 +73,7 @@ public class PaymentCommandService {
         Payment payment = findPaymentWithLock(orderId);
 
         if (payment.getPaymentStatus() == PaymentStatus.REFUND_REQUESTED) {
-            payment.revertToPaid();
+            payment.revertRefundRequest();
         }
 
         // storeOrderId 조회는 락 없이 한다 — markRefundRequested()가 이미
@@ -159,6 +159,5 @@ public class PaymentCommandService {
         }
     }
 }
-
 
 

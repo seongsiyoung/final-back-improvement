@@ -7,6 +7,7 @@ import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -75,5 +76,36 @@ class PaymentRefundTest {
 
         assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.APPROVED);
         assertThat(refund.getRefundAmount()).isEqualTo(2000);
+    }
+
+    @Test
+    @DisplayName("REQUESTED 에서만 PG_PENDING 으로 간다")
+    void markPgPending_fromRequested() {
+        PaymentRefund refund = refundWithStatus(RefundStatus.REQUESTED);
+
+        refund.markPgPending();
+
+        assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.PG_PENDING);
+    }
+
+    @Test
+    @DisplayName("이미 PG_PENDING 이면 다시 찍지 않는다")
+    void markPgPending_fromPgPending_throws() {
+        PaymentRefund refund = refundWithStatus(RefundStatus.PG_PENDING);
+
+        assertThatThrownBy(refund::markPgPending)
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.INVALID_REFUND_STATUS);
+    }
+
+    @Test
+    @DisplayName("RECONCILIATION_REQUIRED 는 어느 상태에서든 기록할 수 있다")
+    void markReconciliationRequired_hasNoGuard() {
+        PaymentRefund refund = refundWithStatus(RefundStatus.PG_APPROVED);
+
+        refund.markReconciliationRequired();
+
+        assertThat(refund.getRefundStatus()).isEqualTo(RefundStatus.RECONCILIATION_REQUIRED);
     }
 }
