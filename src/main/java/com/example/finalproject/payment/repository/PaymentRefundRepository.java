@@ -102,6 +102,8 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
         return findActiveByStoreOrderId(storeOrderId, ACTIVE_REFUND_STATUSES);
     }
 
+    boolean existsByPayment_IdAndRefundStatusIn(Long paymentId, Collection<RefundStatus> refundStatuses);
+
     @Query("SELECT pr.storeOrder.id, COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.id IN :storeOrderIds "

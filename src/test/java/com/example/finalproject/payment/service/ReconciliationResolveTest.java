@@ -12,8 +12,10 @@ import com.example.finalproject.payment.enums.ReconciliationOutcome;
 import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
+import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.RefundScenarioSeeder;
+import com.example.finalproject.testsupport.SubscriptionScenarioSeeder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -29,6 +31,11 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
     @Autowired private RefundScenarioSeeder refundScenarioSeeder;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private PaymentCommandService paymentCommandService;
+    @Autowired private PaymentConfirmCommandService paymentConfirmCommandService;
+    @Autowired private PaymentReconciliationCommandService paymentReconciliationCommandService;
+    @Autowired private SubscriptionPaymentRepository subscriptionPaymentRepository;
+    @Autowired private SubscriptionScenarioSeeder subscriptionScenarioSeeder;
+    @Autowired private SubscriptionChargeCommandService subscriptionChargeCommandService;
 
     @Test
     @DisplayName("환불이 확인되면 장부에 반영하고 활성 건에서 뺀다")
@@ -126,6 +133,68 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
         assertThat(latestRefundStatus(target)).isEqualTo(RefundStatus.RECONCILIATION_REQUIRED);
     }
 
+    @Test
+    @DisplayName("승인 기록이 없음이 확인되면 결제를 실패로 종결한다")
+    void resolvePayment_asNotCharged_marksFailed() {
+        Long paymentId = confirmationReconciliationPaymentId();
+
+        paymentReconciliationCommandService.resolvePayment(paymentId, ReconciliationOutcome.NOT_CHARGED, null);
+
+        assertThat(paymentRepository.findById(paymentId).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.FAILED);
+    }
+
+    @Test
+    @DisplayName("실패로 확정한 결제는 환불 요청을 받지 않는다")
+    void resolvePayment_asNotCharged_stillRejectsRefund() {
+        Long paymentId = confirmationReconciliationPaymentId();
+        paymentReconciliationCommandService.resolvePayment(paymentId, ReconciliationOutcome.NOT_CHARGED, null);
+
+        assertThatThrownBy(() -> paymentRepository.findById(paymentId).orElseThrow().markRefundRequested())
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    @DisplayName("관리자가 승인 뒤 취소를 확인하면 결제의 누적 취소액을 반영한다")
+    void resolvePayment_asRefunded_appliesConfirmedCumulativeAmount() {
+        Long paymentId = confirmationReconciliationPaymentId();
+
+        paymentReconciliationCommandService.resolvePayment(paymentId, ReconciliationOutcome.REFUNDED, 1000);
+
+        assertThat(paymentRepository.findById(paymentId).orElseThrow())
+                .extracting(payment -> payment.getPaymentStatus(), payment -> payment.getRefundedAmount())
+                .containsExactly(PaymentStatus.PARTIAL_REFUNDED, 1000);
+    }
+
+    @Test
+    @DisplayName("확인 필요 구독 결제를 실패로 종결하면 같은 주기 재청구가 가능해진다")
+    void resolveSubscriptionPayment_unblocksRecharge() {
+        var payment = subscriptionScenarioSeeder.stuckSubscriptionPayment(
+                newBuyerEmail(), PaymentStatus.RECONCILIATION_REQUIRED, 10);
+
+        paymentReconciliationCommandService.resolveSubscriptionPayment(payment.getId(), ReconciliationOutcome.NOT_CHARGED);
+
+        assertThat(subscriptionPaymentRepository.findById(payment.getId()).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.FAILED);
+        assertThat(subscriptionChargeCommandService.startCharge(payment.getSubscription().getId())
+                .subscriptionPayment().getPaymentStatus())
+                .isEqualTo(PaymentStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("활성 확인 필요 환불이 붙은 결제는 승인 단계 해제 API로 종결하지 않는다")
+    void resolvePayment_rejectsRefundReconciliationTarget() {
+        RefundTarget target = refundScenarioSeeder.refundStuckInReconciliationRequired(newBuyerEmail());
+        Long paymentId = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow().getId();
+
+        assertThatThrownBy(() -> paymentReconciliationCommandService.resolvePayment(
+                paymentId, ReconciliationOutcome.NOT_CHARGED, null))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(paymentStatusOf(target)).isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
+        assertThat(latestRefundStatus(target)).isEqualTo(RefundStatus.RECONCILIATION_REQUIRED);
+    }
+
     private Long activeRefundIdOf(RefundTarget target) {
         return refundRepository.findActiveByStoreOrderId(target.storeOrderId()).orElseThrow().getId();
     }
@@ -157,6 +226,14 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
             case REFUND_REQUESTED -> StoreOrderStatus.DELIVERED;
             default -> throw new IllegalArgumentException("unsupported requested status: " + requestedStatus);
         };
+    }
+
+    private Long confirmationReconciliationPaymentId() {
+        Long paymentId = refundScenarioSeeder.readyPayment(newBuyerEmail()).paymentId();
+        jdbcTemplate.update("update payments set payment_status = ? where id = ?",
+                PaymentStatus.REVERSAL_PENDING.name(), paymentId);
+        paymentConfirmCommandService.markConfirmReconciliationRequired(paymentId);
+        return paymentId;
     }
 
     private String newBuyerEmail() {
