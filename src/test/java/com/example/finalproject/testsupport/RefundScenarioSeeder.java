@@ -21,6 +21,7 @@ import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.service.RefundTarget;
+import com.example.finalproject.payment.service.PaymentCommandService;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
@@ -46,6 +47,7 @@ public class RefundScenarioSeeder {
     private final OrderProductRepository orderProductRepository;
     private final ProductRepository productRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final PaymentCommandService paymentCommandService;
 
     public ConfirmScenario readyPayment(String buyerEmail) {
         return confirmScenario(buyerEmail, 10);
@@ -130,6 +132,12 @@ public class RefundScenarioSeeder {
     /** PG 취소는 확인됐지만 로컬 장부 반영 전 멈춘 환불. */
     public RefundTarget stuckInPgApproved(String buyerEmail) {
         return stuckRefund(buyerEmail, RefundStatus.PG_APPROVED);
+    }
+
+    public RefundTarget refundStuckInReconciliationRequired(String buyerEmail) {
+        RefundTarget target = refundRequested(buyerEmail);
+        paymentCommandService.markRefundReconciliationRequired(target);
+        return target;
     }
 
     private RefundTarget stuckRefund(String buyerEmail, RefundStatus status) {

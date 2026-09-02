@@ -8,6 +8,7 @@ import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.dto.request.PostPaymentRefundApproveRequest;
 import com.example.finalproject.payment.enums.RefundStatus;
+import com.example.finalproject.payment.enums.ReconciliationOutcome;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.util.RefundAmountCalculator;
@@ -59,6 +60,34 @@ public class AdminRefundCommandService {
 
         refund.adminReject();
         refund.getStoreOrder().revertRefundRequest();
+    }
+
+    @Transactional
+    public void resolveReconciliation(Long refundId, ReconciliationOutcome outcome, Integer confirmedAmount) {
+        PaymentRefund selectedRefund = refundRepository.findById(refundId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND));
+
+        Payment payment = paymentRepository.findWithLockByOrder_Id(selectedRefund.getStoreOrder().getOrder().getId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+        PaymentRefund refund = refundRepository.findActiveByStoreOrderId(selectedRefund.getStoreOrder().getId())
+                .filter(active -> active.getId().equals(refundId))
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_REFUND_STATUS));
+
+        if (outcome == ReconciliationOutcome.REFUNDED) {
+            if (confirmedAmount == null || confirmedAmount <= 0 || confirmedAmount > payment.getAmount()) {
+                throw new BusinessException(ErrorCode.INVALID_REFUND_AMOUNT);
+            }
+            refund.resolveAsRefunded();
+            payment.resolveReconciliationAsRefunded(confirmedAmount);
+            return;
+        }
+        if (outcome == ReconciliationOutcome.NOT_REFUNDED) {
+            refund.resolveAsNotRefunded();
+            payment.resolveReconciliationAsNotRefunded();
+            selectedRefund.getStoreOrder().revertRefundRequest();
+            return;
+        }
+        throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
     }
 
     /**

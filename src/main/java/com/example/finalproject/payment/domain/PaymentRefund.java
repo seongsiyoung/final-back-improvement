@@ -120,6 +120,25 @@ public class PaymentRefund extends BaseTimeEntity {
         this.refundStatus = RefundStatus.RECONCILIATION_REQUIRED;
     }
 
+    public void resolveAsRefunded() {
+        validateReconciliationRequired();
+        this.refundStatus = RefundStatus.APPROVED;
+        if (this.refundedAt == null) {
+            this.refundedAt = LocalDateTime.now();
+        }
+    }
+
+    public void resolveAsNotRefunded() {
+        validateReconciliationRequired();
+        this.refundStatus = RefundStatus.PG_REJECTED;
+    }
+
+    private void validateReconciliationRequired() {
+        if (this.refundStatus != RefundStatus.RECONCILIATION_REQUIRED) {
+            throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
+        }
+    }
+
     public void markPgRejected() {
         this.refundStatus = RefundStatus.PG_REJECTED;
     }
