@@ -135,7 +135,29 @@ public class RefundScenarioSeeder {
     }
 
     public RefundTarget refundStuckInReconciliationRequired(String buyerEmail) {
-        RefundTarget target = refundRequested(buyerEmail);
+        return markRefundReconciliationRequired(refundRequested(buyerEmail));
+    }
+
+    public RefundTarget refundStuckInReconciliationRequired(String buyerEmail, StoreOrderStatus requestedStatus) {
+        RefundTarget target = switch (requestedStatus) {
+            case CANCEL_REQUESTED -> cancelRequested(buyerEmail);
+            case REJECT_REQUESTED -> rejectRequested(buyerEmail);
+            case REFUND_REQUESTED -> refundRequested(buyerEmail);
+            default -> throw new IllegalArgumentException("unsupported requested status: " + requestedStatus);
+        };
+        return markRefundReconciliationRequired(target);
+    }
+
+    private RefundTarget markRefundReconciliationRequired(RefundTarget target) {
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+        paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
+                .orElseGet(() -> paymentRefundRepository.save(PaymentRefund.builder()
+                        .payment(payment)
+                        .storeOrder(storeOrderRepository.findById(target.storeOrderId()).orElseThrow())
+                        .refundAmount(target.amount())
+                        .refundReason(target.reason())
+                        .refundStatus(RefundStatus.PG_PENDING)
+                        .build()));
         paymentCommandService.markRefundReconciliationRequired(target);
         return target;
     }

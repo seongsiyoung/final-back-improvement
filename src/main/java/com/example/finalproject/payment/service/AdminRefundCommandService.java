@@ -84,10 +84,21 @@ public class AdminRefundCommandService {
         if (outcome == ReconciliationOutcome.NOT_REFUNDED) {
             refund.resolveAsNotRefunded();
             payment.resolveReconciliationAsNotRefunded();
-            selectedRefund.getStoreOrder().revertRefundRequest();
+            revertStoreOrderForNotRefunded(selectedRefund.getStoreOrder());
             return;
         }
         throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
+    }
+
+    private void revertStoreOrderForNotRefunded(StoreOrder storeOrder) {
+        switch (storeOrder.getStatus()) {
+            case CANCEL_REQUESTED -> storeOrder.revertCancelRequest();
+            case REFUND_REQUESTED -> storeOrder.revertRefundRequest();
+            case REJECT_REQUESTED -> {
+                // 사장님/자동 거절은 PG 취소 실패 여부와 무관하게 유지한다.
+            }
+            default -> throw new BusinessException(ErrorCode.INVALID_STORE_ORDER_REFUND_STATUS);
+        }
     }
 
     /**

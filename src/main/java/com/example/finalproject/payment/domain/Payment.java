@@ -120,6 +120,9 @@ public class Payment extends BaseTimeEntity {
     }
 
     public void applyCumulativeCanceledAmount(int cumulativeCanceledAmount) {
+        if (this.refundedAmount != null && cumulativeCanceledAmount < this.refundedAmount) {
+            throw new BusinessException(ErrorCode.INVALID_REFUND_AMOUNT);
+        }
         this.refundedAmount = cumulativeCanceledAmount;
 
         if (this.refundedAmount >= this.amount) {
