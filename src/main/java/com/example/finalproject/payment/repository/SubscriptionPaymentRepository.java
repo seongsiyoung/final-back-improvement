@@ -16,6 +16,9 @@ public interface SubscriptionPaymentRepository extends JpaRepository<Subscriptio
     boolean existsBySubscription_IdAndBillingCycleDateAndPaymentStatusIn(
             Long subscriptionId, LocalDate billingCycleDate, Collection<PaymentStatus> paymentStatuses);
 
+    boolean existsBySubscription_UserIdAndPaymentStatusIn(
+            Long userId, Collection<PaymentStatus> paymentStatuses);
+
     @Query("SELECT sp FROM SubscriptionPayment sp "
             + "WHERE sp.paymentStatus IN (:statuses) "
             + "AND sp.updatedAt < :threshold "
