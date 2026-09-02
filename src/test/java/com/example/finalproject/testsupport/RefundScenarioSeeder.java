@@ -121,6 +121,42 @@ public class RefundScenarioSeeder {
         return targetOf(storeOrder, "고객 변심");
     }
 
+    /** PG 취소 요청 뒤 결과 확인 없이 멈춘 환불. */
+    public RefundTarget stuckInPgPending(String buyerEmail) {
+        return stuckRefund(buyerEmail, RefundStatus.PG_PENDING);
+    }
+
+    /** PG 취소는 확인됐지만 로컬 장부 반영 전 멈춘 환불. */
+    public RefundTarget stuckInPgApproved(String buyerEmail) {
+        return stuckRefund(buyerEmail, RefundStatus.PG_APPROVED);
+    }
+
+    private RefundTarget stuckRefund(String buyerEmail, RefundStatus status) {
+        RefundTarget target = cancelRequested(buyerEmail);
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+        jdbcTemplate.update("update payments set payment_status = ? where id = ?",
+                PaymentStatus.REFUND_REQUESTED.name(), payment.getId());
+        PaymentRefund refund = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrderRepository.findById(target.storeOrderId()).orElseThrow())
+                .refundAmount(target.amount())
+                .refundReason(target.reason())
+                .refundStatus(RefundStatus.PG_PENDING)
+                .build();
+        if (status == RefundStatus.PG_APPROVED) {
+            refund.markPgApproved();
+        }
+        paymentRefundRepository.save(refund);
+        return target;
+    }
+
+    /** 장부 규칙 위반을 만든다. 결제는 REFUND_REQUESTED 인데 이미 전액 환불된 것으로 기록돼 있다. */
+    public void forceFullyRefundedAmount(RefundTarget target) {
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+        jdbcTemplate.update("update payments set refunded_amount = ? where id = ?",
+                payment.getAmount(), payment.getId());
+    }
+
     public RefundTarget refundRequested(String buyerEmail) {
         StoreOrder storeOrder = createApprovedPaymentWithStoreOrder(buyerEmail);
         ReflectionTestUtils.setField(storeOrder, "deliveredAt", LocalDateTime.now());

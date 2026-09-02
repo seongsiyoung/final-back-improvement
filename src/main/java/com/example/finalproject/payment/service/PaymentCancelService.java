@@ -24,13 +24,14 @@ public class PaymentCancelService {
     private final PaymentCommandService paymentCommandService;
 
     public void cancel(RefundTarget target) {
-
-        Long orderId = target.orderId();
-
-        Payment payment = paymentRepository.findByOrder_Id(orderId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
-
         paymentCommandService.startRefund(target);
+        resumeCancel(target);
+    }
+
+    /** 환불 시작이 커밋된 건의 PG 취소부터 이어간다. */
+    public void resumeCancel(RefundTarget target) {
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
         CancelResult result = callPgCancel(payment, target);
 

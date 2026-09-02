@@ -124,9 +124,34 @@ public class PaymentCommandService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markRefundReconciliationRequired(RefundTarget target) {
-        findPaymentWithLock(target.orderId()).markReconciliationRequired();
+        Payment payment = findPaymentWithLock(target.orderId());
+
+        // 다른 경로가 먼저 환불을 확정했다면 그 결제는 정상 종결이다.
+        // 덮어쓰면 성공한 환불이 장애로 보이고, markRefundRequested 가
+        // RECONCILIATION_REQUIRED 를 거부해 이후 환불까지 막힌다.
+        if (payment.getPaymentStatus() == PaymentStatus.REFUNDED
+                || payment.getPaymentStatus() == PaymentStatus.PARTIAL_REFUNDED) {
+            log.warn("[REFUND_RECONCILE_SKIPPED_ALREADY_REFUNDED] orderId={}, storeOrderId={}, status={}",
+                    target.orderId(), target.storeOrderId(), payment.getPaymentStatus());
+            return;
+        }
+
+        payment.markReconciliationRequired();
         paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
                 .ifPresent(PaymentRefund::markReconciliationRequired);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean isRefundAlreadyApplied(RefundTarget target) {
+        Payment payment = findPaymentWithLock(target.orderId());
+        if (payment.getPaymentStatus() != PaymentStatus.REFUNDED
+                && payment.getPaymentStatus() != PaymentStatus.PARTIAL_REFUNDED) {
+            return false;
+        }
+        return paymentRefundRepository.findByStoreOrderIdOrderByCreatedAtDesc(target.storeOrderId()).stream()
+                .findFirst()
+                .map(refund -> refund.getRefundStatus() == RefundStatus.APPROVED)
+                .orElse(false);
     }
 
     private Payment findPaymentWithLock(Long orderId) {
