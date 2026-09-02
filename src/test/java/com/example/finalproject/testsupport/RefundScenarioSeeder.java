@@ -27,6 +27,7 @@ import com.example.finalproject.user.domain.User;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -43,6 +44,7 @@ public class RefundScenarioSeeder {
     private final OrderLineRepository orderLineRepository;
     private final OrderProductRepository orderProductRepository;
     private final ProductRepository productRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     public ConfirmScenario readyPayment(String buyerEmail) {
         return confirmScenario(buyerEmail, 10);
@@ -100,6 +102,16 @@ public class RefundScenarioSeeder {
     public RefundTarget approvedWithPendingStoreOrder(String buyerEmail) {
         StoreOrder storeOrder = createApprovedPaymentWithStoreOrder(buyerEmail);
         return targetOf(storeOrder, "고객 변심");
+    }
+
+    /** 과거 시각에 멈춘 재조정 대상 결제. updatedAt은 JPA auditing을 우회해 설정한다. */
+    public Long stuckPayment(String buyerEmail, PaymentStatus status, int minutesAgo) {
+        RefundTarget target = approvedWithPendingStoreOrder(buyerEmail);
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+
+        jdbcTemplate.update("update payments set updated_at = ?, payment_status = ? where id = ?",
+                LocalDateTime.now().minusMinutes(minutesAgo), status.name(), payment.getId());
+        return payment.getId();
     }
 
     public RefundTarget cancelRequested(String buyerEmail) {

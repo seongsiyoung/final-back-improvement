@@ -4,8 +4,11 @@ import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.order.enums.OrderType;
 import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.order.repository.custom.StoreOrderRepositoryCustom;
+import com.example.finalproject.payment.domain.Payment;
+import com.example.finalproject.payment.enums.PaymentStatus;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -67,6 +70,19 @@ public interface StoreOrderRepository extends JpaRepository<StoreOrder, Long>, S
     List<StoreOrder> findByStatus(StoreOrderStatus status);
 
     List<StoreOrder> findByStatusAndCreatedAtBefore(StoreOrderStatus status, LocalDateTime createdAtBefore);
+
+    /** 환불은 끝났는데 주문 후속 처리가 남은 건. */
+    @Query("SELECT so FROM StoreOrder so "
+            + "JOIN Payment p ON p.order.id = so.order.id "
+            + "WHERE p.paymentStatus IN (:paymentStatuses) "
+            + "AND so.status IN (:storeOrderStatuses) "
+            + "AND so.updatedAt < :threshold "
+            + "ORDER BY so.updatedAt ASC")
+    List<StoreOrder> findRefundCompletionLostTargets(
+            @Param("paymentStatuses") Collection<PaymentStatus> paymentStatuses,
+            @Param("storeOrderStatuses") Collection<StoreOrderStatus> storeOrderStatuses,
+            @Param("threshold") LocalDateTime threshold,
+            Pageable pageable);
 
     // 매출 조회: 주문 유형별 DELIVERED 건수
     @Query("SELECT COUNT(so) FROM StoreOrder so "

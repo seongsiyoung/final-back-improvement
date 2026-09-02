@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -52,4 +53,14 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findByPgOrderId(String pgOrderId);
 
     List<Payment> findByPaymentStatusAndUpdatedAtBefore(PaymentStatus paymentStatus, LocalDateTime threshold);
+
+    /** 재조정 대상. 오래된 것부터 상한만큼만 가져온다. */
+    @Query("SELECT p FROM Payment p "
+            + "WHERE p.paymentStatus IN (:statuses) "
+            + "AND p.updatedAt < :threshold "
+            + "ORDER BY p.updatedAt ASC")
+    List<Payment> findReconciliationTargets(
+            @Param("statuses") Collection<PaymentStatus> statuses,
+            @Param("threshold") LocalDateTime threshold,
+            Pageable pageable);
 }

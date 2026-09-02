@@ -148,4 +148,14 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
             @Param("refundStatus") RefundStatus refundStatus,
             @Param("start") LocalDateTime start,
             @Param("end") LocalDateTime end);
+
+    /** 환불 재조정 대상. PG_PENDING 과 PG_APPROVED 를 함께 뽑는다. */
+    @Query("SELECT pr FROM PaymentRefund pr "
+            + "WHERE pr.refundStatus IN (:statuses) "
+            + "AND pr.updatedAt < :threshold "
+            + "ORDER BY pr.updatedAt ASC")
+    List<PaymentRefund> findReconciliationTargets(
+            @Param("statuses") Collection<RefundStatus> statuses,
+            @Param("threshold") LocalDateTime threshold,
+            Pageable pageable);
 }
