@@ -16,6 +16,7 @@ import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
@@ -147,6 +148,77 @@ public class RefundScenarioSeeder {
             refund.markPgApproved();
         }
         paymentRefundRepository.save(refund);
+        return target;
+    }
+
+    /** 환불은 확정됐는데 취소 후속 처리가 남고 재고도 복구되지 않은 상태. */
+    public RefundTarget refundCompletionLost(String buyerEmail) {
+        return settleAsLostFollowUp(cancelRequested(buyerEmail));
+    }
+
+    /**
+     * 결제는 환불로 끝났지만 이 매장 주문에는 환불 이력이 없는 상태.
+     * 같은 주문의 다른 매장만 환불됐을 때 실제로 생기는 조합이다.
+     */
+    public RefundTarget refundCompletionLostWithoutRefundHistory(String buyerEmail) {
+        RefundTarget target = cancelRequested(buyerEmail);
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+
+        jdbcTemplate.update("update payments set payment_status = ?, refunded_amount = ? where id = ?",
+                PaymentStatus.PARTIAL_REFUNDED.name(), payment.getAmount() / 2, payment.getId());
+        jdbcTemplate.update("update store_orders set updated_at = ? where id = ?",
+                LocalDateTime.now().minusMinutes(30), target.storeOrderId());
+        return target;
+    }
+
+    /** 같은 유실 상태를 거절 경로에서 만든다. */
+    public RefundTarget rejectCompletionLost(String buyerEmail) {
+        return settleAsLostFollowUp(rejectRequested(buyerEmail));
+    }
+
+    /** 유실 복구 대상에 사유가 다른 옛 환불 이력 한 건을 더 깔아 둔다. */
+    public void addOlderRejectedRefund(RefundTarget target, String olderReason) {
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+        PaymentRefund older = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrderRepository.findById(target.storeOrderId()).orElseThrow())
+                .refundAmount(target.amount())
+                .refundReason(olderReason)
+                .refundStatus(RefundStatus.PG_PENDING)
+                .responsibility(RefundResponsibility.PLATFORM)
+                .isSettled(false)
+                .build();
+        older.markPgRejected();
+        paymentRefundRepository.save(older);
+
+        jdbcTemplate.update("update payment_refunds set created_at = ? where id = ?",
+                LocalDateTime.now().minusDays(1), older.getId());
+    }
+
+    /**
+     * applyRefund 는 커밋됐는데 AFTER_COMMIT 후속 처리가 실패한 상태를 만든다.
+     * store_orders.updated_at 도 과거로 밀어 재조정 스캔의 시간 경계를 통과하게 한다.
+     */
+    private RefundTarget settleAsLostFollowUp(RefundTarget target) {
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+
+        PaymentRefund refund = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrderRepository.findById(target.storeOrderId()).orElseThrow())
+                .refundAmount(target.amount())
+                .refundReason(target.reason())
+                .refundStatus(RefundStatus.PG_PENDING)
+                .responsibility(RefundResponsibility.PLATFORM)
+                .isSettled(false)
+                .build();
+        refund.markPgApproved();
+        refund.adminApprove(target.amount());
+        paymentRefundRepository.save(refund);
+
+        jdbcTemplate.update("update payments set payment_status = ?, refunded_amount = ? where id = ?",
+                PaymentStatus.REFUNDED.name(), payment.getAmount(), payment.getId());
+        jdbcTemplate.update("update store_orders set updated_at = ? where id = ?",
+                LocalDateTime.now().minusMinutes(30), target.storeOrderId());
         return target;
     }
 
