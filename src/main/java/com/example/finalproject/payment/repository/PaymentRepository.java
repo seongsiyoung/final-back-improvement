@@ -2,13 +2,16 @@ package com.example.finalproject.payment.repository;
 
 import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.RefundStatus;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -61,4 +64,24 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             @Param("statuses") Collection<PaymentStatus> statuses,
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
+
+    Page<Payment> findByPaymentStatusInOrderByUpdatedAtAsc(Collection<PaymentStatus> statuses, Pageable pageable);
+
+    @EntityGraph(attributePaths = "order")
+    @Query(value = "SELECT p FROM Payment p "
+            + "WHERE p.paymentStatus IN :statuses "
+            + "AND NOT EXISTS (SELECT pr.id FROM PaymentRefund pr "
+            + "WHERE pr.payment = p AND pr.refundStatus IN :activeRefundStatuses) "
+            + "ORDER BY p.updatedAt ASC",
+            countQuery = "SELECT COUNT(p) FROM Payment p "
+                    + "WHERE p.paymentStatus IN :statuses "
+                    + "AND NOT EXISTS (SELECT pr.id FROM PaymentRefund pr "
+                    + "WHERE pr.payment = p AND pr.refundStatus IN :activeRefundStatuses)")
+    Page<Payment> findActionRequired(
+            @Param("statuses") Collection<PaymentStatus> statuses,
+            @Param("activeRefundStatuses") Collection<RefundStatus> activeRefundStatuses,
+            Pageable pageable);
+
+    @Query("SELECT p.paymentStatus, COUNT(p), MIN(p.updatedAt) FROM Payment p WHERE p.paymentStatus IN :statuses GROUP BY p.paymentStatus")
+    List<Object[]> countByStatusGroup(@Param("statuses") Collection<PaymentStatus> statuses);
 }

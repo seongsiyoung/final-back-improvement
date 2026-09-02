@@ -1,5 +1,6 @@
 package com.example.finalproject.payment.repository;
 
+import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
@@ -7,6 +8,7 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.List;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -160,4 +162,29 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
             @Param("statuses") Collection<RefundStatus> statuses,
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
+
+    Page<PaymentRefund> findByRefundStatusInOrderByUpdatedAtAsc(Collection<RefundStatus> statuses, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"payment", "storeOrder", "storeOrder.order"})
+    @Query(value = "SELECT pr FROM PaymentRefund pr "
+            + "WHERE pr.refundStatus = :reconciliationStatus "
+            + "OR (pr.refundStatus = :pgRejectedStatus "
+            + "AND pr.storeOrder.status = :retryableStoreOrderStatus "
+            + "AND NOT EXISTS (SELECT newer.id FROM PaymentRefund newer "
+            + "WHERE newer.storeOrder = pr.storeOrder AND newer.id > pr.id)) "
+            + "ORDER BY pr.updatedAt ASC",
+            countQuery = "SELECT COUNT(pr) FROM PaymentRefund pr "
+                    + "WHERE pr.refundStatus = :reconciliationStatus "
+                    + "OR (pr.refundStatus = :pgRejectedStatus "
+                    + "AND pr.storeOrder.status = :retryableStoreOrderStatus "
+                    + "AND NOT EXISTS (SELECT newer.id FROM PaymentRefund newer "
+                    + "WHERE newer.storeOrder = pr.storeOrder AND newer.id > pr.id))")
+    Page<PaymentRefund> findActionRequired(
+            @Param("reconciliationStatus") RefundStatus reconciliationStatus,
+            @Param("pgRejectedStatus") RefundStatus pgRejectedStatus,
+            @Param("retryableStoreOrderStatus") StoreOrderStatus retryableStoreOrderStatus,
+            Pageable pageable);
+
+    @Query("SELECT pr.refundStatus, COUNT(pr), MIN(pr.updatedAt) FROM PaymentRefund pr WHERE pr.refundStatus IN :statuses GROUP BY pr.refundStatus")
+    List<Object[]> countByStatusGroup(@Param("statuses") Collection<RefundStatus> statuses);
 }
