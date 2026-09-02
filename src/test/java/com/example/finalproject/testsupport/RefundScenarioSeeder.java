@@ -222,6 +222,36 @@ public class RefundScenarioSeeder {
         return target;
     }
 
+    /**
+     * 통합 테스트는 DB 를 공유한다. 다른 테스트가 남긴 행이 스캔에 섞이지 않도록
+     * 모든 후보의 updatedAt 을 현재로 밀어 시간 경계 밖으로 보낸다.
+     */
+    public void hideAllReconciliationTargets() {
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update("update payment_refunds set updated_at = ?", now);
+        jdbcTemplate.update("update store_orders set updated_at = ?", now);
+        jdbcTemplate.update("update payments set updated_at = ?", now);
+    }
+
+    /** 이 매장 주문에 걸린 행만 스캔의 시간 경계를 통과하게 만든다. */
+    public void exposeReconciliationTarget(RefundTarget target) {
+        exposeReconciliationTarget(target, 30);
+    }
+
+    /** minutesAgo 로 스캔 순서(updatedAt ASC)까지 지정한다. */
+    public void exposeReconciliationTarget(RefundTarget target, int minutesAgo) {
+        LocalDateTime past = LocalDateTime.now().minusMinutes(minutesAgo);
+        jdbcTemplate.update("update store_orders set updated_at = ? where id = ?",
+                past, target.storeOrderId());
+        jdbcTemplate.update("update payment_refunds set updated_at = ? where store_order_id = ?",
+                past, target.storeOrderId());
+    }
+
+    /** 이 매장 주문에 걸린 결제의 pgOrderId. Toss 조회 스텁을 건별로 나눌 때 쓴다. */
+    public String pgOrderIdOf(RefundTarget target) {
+        return paymentRepository.findByOrder_Id(target.orderId()).orElseThrow().getPgOrderId();
+    }
+
     /** 장부 규칙 위반을 만든다. 결제는 REFUND_REQUESTED 인데 이미 전액 환불된 것으로 기록돼 있다. */
     public void forceFullyRefundedAmount(RefundTarget target) {
         Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();

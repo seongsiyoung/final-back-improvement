@@ -5,3 +5,12 @@ spring:
     name: Final-Project
   jpa:
     open-in-view: false
+  task:
+    scheduling:
+      pool:
+        # 재조정 스캔이 PG 지연으로 길어져도 SSE 하트비트와 주문 스캔이 굶지 않게 한다.
+        size: 4
+
+reconciliation:
+  batch-size: 100
+  stale-threshold-minutes: 5

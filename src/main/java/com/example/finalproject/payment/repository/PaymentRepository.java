@@ -52,8 +52,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findByPgOrderId(String pgOrderId);
 
-    List<Payment> findByPaymentStatusAndUpdatedAtBefore(PaymentStatus paymentStatus, LocalDateTime threshold);
-
     /** 재조정 대상. 오래된 것부터 상한만큼만 가져온다. */
     @Query("SELECT p FROM Payment p "
             + "WHERE p.paymentStatus IN (:statuses) "

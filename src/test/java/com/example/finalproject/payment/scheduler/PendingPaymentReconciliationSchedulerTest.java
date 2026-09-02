@@ -138,7 +138,7 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
         Payment before = paymentRepository.findById(payment.getId()).orElseThrow();
         assertThat(before.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
 
-        scheduler.reconcileStalePendingPayments();
+        scheduler.reconcileStalePayments();
         entityManager.clear();
 
         Payment after = paymentRepository.findById(payment.getId()).orElseThrow();
@@ -159,7 +159,7 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
         // updatedAt을 되돌리지 않음 — 방금 생성된 정상 진행 중 결제로 취급돼야 한다
         toss.stubGetPaymentByOrderIdStatus(payment.getPgOrderId(), "DONE");
 
-        scheduler.reconcileStalePendingPayments();
+        scheduler.reconcileStalePayments();
         entityManager.clear();
 
         Payment after = paymentRepository.findById(payment.getId()).orElseThrow();
@@ -178,7 +178,7 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
         toss.stubGetPaymentByOrderIdStatus(succeedingPayment.getPgOrderId(), "DONE");
 
         // 두 결제 모두 대상인 한 번의 배치 실행 안에서, 실패한 건이 나머지를 막지 않아야 한다.
-        scheduler.reconcileStalePendingPayments();
+        scheduler.reconcileStalePayments();
         entityManager.clear();
 
         Payment failedAfter = paymentRepository.findById(failingPayment.getId()).orElseThrow();
