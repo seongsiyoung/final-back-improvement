@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.finalproject.global.exception.custom.BusinessException;
+import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.PaymentStatus;
@@ -13,9 +14,13 @@ import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
+import com.example.finalproject.subscription.enums.SubscriptionStatus;
+import com.example.finalproject.subscription.repository.SubscriptionRepository;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.RefundScenarioSeeder;
 import com.example.finalproject.testsupport.SubscriptionScenarioSeeder;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -34,8 +39,8 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
     @Autowired private PaymentConfirmCommandService paymentConfirmCommandService;
     @Autowired private PaymentReconciliationCommandService paymentReconciliationCommandService;
     @Autowired private SubscriptionPaymentRepository subscriptionPaymentRepository;
+    @Autowired private SubscriptionRepository subscriptionRepository;
     @Autowired private SubscriptionScenarioSeeder subscriptionScenarioSeeder;
-    @Autowired private SubscriptionChargeCommandService subscriptionChargeCommandService;
 
     @Test
     @DisplayName("환불이 확인되면 장부에 반영하고 활성 건에서 뺀다")
@@ -166,19 +171,59 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
                 .containsExactly(PaymentStatus.PARTIAL_REFUNDED, 1000);
     }
 
-    @Test
-    @DisplayName("확인 필요 구독 결제를 실패로 종결하면 같은 주기 재청구가 가능해진다")
-    void resolveSubscriptionPayment_unblocksRecharge() {
+    @ParameterizedTest
+    @EnumSource(value = ReconciliationOutcome.class, names = {"NOT_CHARGED", "REFUNDED"})
+    @DisplayName("확인 필요 구독 결제를 종결하면 소진된 재시도 이력을 초기화하고 다음 청구 대상으로 복원한다")
+    void resolveSubscriptionPayment_restoresSubscriptionBillingTarget(ReconciliationOutcome outcome) {
         var payment = subscriptionScenarioSeeder.stuckSubscriptionPayment(
                 newBuyerEmail(), PaymentStatus.RECONCILIATION_REQUIRED, 10);
+        Long subscriptionId = jdbcTemplate.queryForObject(
+                "select subscription_id from subscription_payments where id = ?", Long.class, payment.getId());
+        jdbcTemplate.update("update subscriptions set fail_count = ?, next_retry_at = ? where id = ?",
+                3, LocalDateTime.now().minusMinutes(1), subscriptionId);
 
-        paymentReconciliationCommandService.resolveSubscriptionPayment(payment.getId(), ReconciliationOutcome.NOT_CHARGED);
+        paymentReconciliationCommandService.resolveSubscriptionPayment(payment.getId(), outcome);
 
         assertThat(subscriptionPaymentRepository.findById(payment.getId()).orElseThrow().getPaymentStatus())
                 .isEqualTo(PaymentStatus.FAILED);
-        assertThat(subscriptionChargeCommandService.startCharge(payment.getSubscription().getId())
-                .subscriptionPayment().getPaymentStatus())
-                .isEqualTo(PaymentStatus.PENDING);
+        assertThat(subscriptionRepository.findById(subscriptionId).orElseThrow())
+                .extracting(subscription -> subscription.getStatus(), subscription -> subscription.getFailCount(),
+                        subscription -> subscription.getNextRetryAt())
+                .containsExactly(SubscriptionStatus.ACTIVE, 0, null);
+        assertThat(subscriptionRepository.findIdsByStatusAndNextPaymentDateLessThanEqual(
+                SubscriptionStatus.ACTIVE, LocalDate.now())).contains(subscriptionId);
+    }
+
+    @Test
+    @DisplayName("확인 필요 구독 결제를 종결해도 해지 요청 구독을 재청구 대상으로 되살리지 않는다")
+    void resolveSubscriptionPayment_doesNotReviveCancellationPendingSubscription() {
+        var payment = subscriptionScenarioSeeder.stuckSubscriptionPayment(
+                newBuyerEmail(), PaymentStatus.RECONCILIATION_REQUIRED, 10);
+        Long subscriptionId = jdbcTemplate.queryForObject(
+                "select subscription_id from subscription_payments where id = ?", Long.class, payment.getId());
+        jdbcTemplate.update("update subscriptions set status = ? where id = ?",
+                SubscriptionStatus.CANCELLATION_PENDING.name(), subscriptionId);
+
+        paymentReconciliationCommandService.resolveSubscriptionPayment(payment.getId(), ReconciliationOutcome.REFUNDED);
+
+        assertThat(subscriptionPaymentRepository.findById(payment.getId()).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.FAILED);
+        assertThat(subscriptionRepository.findById(subscriptionId).orElseThrow().getStatus())
+                .isEqualTo(SubscriptionStatus.CANCELLATION_PENDING);
+    }
+
+    @Test
+    @DisplayName("REFUNDED 결과에 유효하지 않은 누적 취소액을 입력하면 금액 오류를 반환한다")
+    void resolvePayment_rejectsInvalidRefundedAmountWithAmountError() {
+        Long paymentId = confirmationReconciliationPaymentId();
+
+        assertThatThrownBy(() -> paymentReconciliationCommandService.resolvePayment(
+                paymentId, ReconciliationOutcome.REFUNDED, 0))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(error -> assertThat(((BusinessException) error).getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_REFUND_AMOUNT));
+        assertThat(paymentRepository.findById(paymentId).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
     }
 
     @Test
