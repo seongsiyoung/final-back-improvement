@@ -3,11 +3,13 @@ package com.example.finalproject.testsupport;
 import com.example.finalproject.global.util.GeometryUtil;
 import com.example.finalproject.order.domain.Order;
 import com.example.finalproject.order.domain.OrderLine;
+import com.example.finalproject.order.domain.OrderProduct;
 import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.order.enums.OrderType;
 import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.order.repository.OrderRepository;
 import com.example.finalproject.order.repository.OrderLineRepository;
+import com.example.finalproject.order.repository.OrderProductRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.domain.PaymentRefund;
@@ -24,6 +26,7 @@ import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.user.domain.User;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -38,6 +41,7 @@ public class RefundScenarioSeeder {
     private final StoreOrderRepository storeOrderRepository;
     private final PaymentRefundRepository paymentRefundRepository;
     private final OrderLineRepository orderLineRepository;
+    private final OrderProductRepository orderProductRepository;
     private final ProductRepository productRepository;
 
     public ConfirmScenario readyPayment(String buyerEmail) {
@@ -199,7 +203,7 @@ public class RefundScenarioSeeder {
     }
 
     private StoreOrder createApprovedPaymentWithStoreOrder(String buyerEmail) {
-        Store store = loadTestDataSeeder.seedStoreWithProducts(0, 1);
+        Store store = loadTestDataSeeder.seedStoreWithProducts(1, 1);
         User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
         Order order = orderRepository.save(Order.builder()
                 .orderNumber("ORD-RS-" + System.nanoTime())
@@ -230,6 +234,18 @@ public class RefundScenarioSeeder {
                 .storeProductPrice(2000)
                 .deliveryFee(1000)
                 .finalPrice(3000)
+                .build());
+        Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
+                .getContent().stream()
+                .filter(candidate -> candidate.getProductName().equals("부하테스트상품-0"))
+                .findFirst()
+                .orElseThrow();
+        orderProductRepository.save(OrderProduct.builder()
+                .storeOrder(storeOrder)
+                .product(product)
+                .productNameSnapshot(product.getProductName())
+                .priceSnapshot(product.getEffectivePrice())
+                .quantity(1)
                 .build());
         return storeOrder;
     }
