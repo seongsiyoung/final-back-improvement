@@ -19,6 +19,7 @@ import com.example.finalproject.payment.enums.ReconciliationOutcome;
 import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
+import com.example.finalproject.payment.scheduler.PendingPaymentReconciliationScheduler;
 import com.example.finalproject.payment.scheduler.RefundReconciliationScheduler;
 import com.example.finalproject.payment.service.AdminRefundCommandService;
 import com.example.finalproject.payment.service.PaymentCommandService;
@@ -52,6 +53,8 @@ class RecoveryScenarioTest extends IntegrationTestSupport {
 
     @Autowired
     private RefundReconciliationScheduler refundReconciliationScheduler;
+    @Autowired
+    private PendingPaymentReconciliationScheduler pendingPaymentReconciliationScheduler;
     @Autowired
     private AdminReconciliationService adminReconciliationService;
     @Autowired
@@ -141,6 +144,21 @@ class RecoveryScenarioTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("보상 취소 결과를 모른 채 멈춘 결제를 스캔이 집어 실패로 확정한다")
+    void reversalPending_isPickedUpByScanAndFailed() {
+        refundScenarioSeeder.hideAllReconciliationTargets();
+        Long paymentId = refundScenarioSeeder.stuckPayment(email(), PaymentStatus.REVERSAL_PENDING, 30);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus("CANCELED"));
+
+        pendingPaymentReconciliationScheduler.reconcileStalePayments();
+
+        assertThat(paymentRepository.findById(paymentId).orElseThrow().getPaymentStatus())
+                .as("4단계가 만든 REVERSAL_PENDING 을 회수하는 유일한 경로다. "
+                        + "TARGET_STATUSES 에서 빠지면 아무도 집어가지 않는다")
+                .isEqualTo(PaymentStatus.FAILED);
+    }
+
+    @Test
     @DisplayName("자동 복구가 포기한 환불이 관리자 목록에 뜨고, 해제하면 그 주문의 환불이 다시 열린다")
     void reconciliationRequired_surfacesToAdminAndResolves() {
         RefundTarget target = refundScenarioSeeder.refundStuckInReconciliationRequired(email());
@@ -196,6 +214,13 @@ class RecoveryScenarioTest extends IntegrationTestSupport {
                         + "where op.store_order_id = ? order by op.id",
                 Integer.class,
                 storeOrderId);
+    }
+
+    private TossConfirmResponse withStatus(String status) {
+        TossConfirmResponse response = new TossConfirmResponse();
+        ReflectionTestUtils.setField(response, "paymentKey", "recovery-scenario-key-" + System.nanoTime());
+        ReflectionTestUtils.setField(response, "status", status);
+        return response;
     }
 
     private TossConfirmResponse response(int total, int balance) {
