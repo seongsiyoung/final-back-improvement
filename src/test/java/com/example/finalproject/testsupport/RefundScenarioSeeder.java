@@ -382,6 +382,77 @@ public class RefundScenarioSeeder {
         return targetOf(storeOrder, "승인된 환불");
     }
 
+    /**
+     * 한 주문에 매장이 둘인 상태. Payment 는 주문 단위이고 StoreOrder 는 매장 단위라는
+     * 구조를 그대로 만든다. 재조정 스캔이 결제 상태로 대상을 고를 때 이 차이가 드러난다.
+     */
+    public MultiStoreScenario twoStoresOneOrder(String buyerEmail) {
+        Store storeA = loadTestDataSeeder.seedStoreWithProducts("multi-store-a@test.com", 1, 5);
+        Store storeB = loadTestDataSeeder.seedStoreWithProducts("multi-store-b@test.com", 1, 5);
+        User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
+
+        Order order = orderRepository.save(Order.builder()
+                .orderNumber("ORD-MS-" + System.nanoTime())
+                .user(buyer)
+                .orderType(OrderType.REGULAR)
+                .totalProductPrice(4000)
+                .totalDeliveryFee(2000)
+                .finalPrice(6000)
+                .deliveryAddress("서울시 강남구 테헤란로 123")
+                .deliveryLocation(GeometryUtil.createPoint(127.0276, 37.4979))
+                .orderedAt(LocalDateTime.now())
+                .build());
+
+        Payment payment = paymentRepository.save(Payment.builder()
+                .order(order)
+                .paymentMethod(PaymentMethodType.CARD)
+                .amount(6000)
+                .paymentStatus(PaymentStatus.PENDING)
+                .pgOrderId("PG-MULTI-STORE-" + System.nanoTime())
+                .pgProvider("tosspayments")
+                .build());
+        payment.approve("multi-store-payment-key-" + System.nanoTime(), "pg-tx", null);
+        paymentRepository.save(payment);
+
+        return new MultiStoreScenario(
+                order.getId(),
+                storeOrderOf(order, storeA),
+                storeOrderOf(order, storeB));
+    }
+
+    private RefundTarget storeOrderOf(Order order, Store store) {
+        StoreOrder storeOrder = storeOrderRepository.save(StoreOrder.builder()
+                .order(order)
+                .store(store)
+                .orderType(OrderType.REGULAR)
+                .storeProductPrice(2000)
+                .deliveryFee(1000)
+                .finalPrice(3000)
+                .build());
+        Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
+                .getContent().stream()
+                .filter(candidate -> candidate.getProductName().equals("부하테스트상품-0"))
+                .findFirst()
+                .orElseThrow();
+        orderProductRepository.save(OrderProduct.builder()
+                .storeOrder(storeOrder)
+                .product(product)
+                .productNameSnapshot(product.getProductName())
+                .priceSnapshot(product.getEffectivePrice())
+                .quantity(1)
+                .build());
+        return targetOf(storeOrder, "고객 변심");
+    }
+
+    /** 매장 주문마다 취소를 요청한 상태로 만든다. 결제는 건드리지 않는다. */
+    @Transactional
+    public void requestCancelOn(RefundTarget target) {
+        storeOrderRepository.findById(target.storeOrderId()).orElseThrow().requestCancel();
+    }
+
+    public record MultiStoreScenario(Long orderId, RefundTarget storeA, RefundTarget storeB) {
+    }
+
     private StoreOrder createApprovedPaymentWithStoreOrder(String buyerEmail) {
         Store store = loadTestDataSeeder.seedStoreWithProducts(1, 1);
         User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
