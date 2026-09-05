@@ -43,6 +43,19 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
     @Autowired private SubscriptionScenarioSeeder subscriptionScenarioSeeder;
 
     @Test
+    @DisplayName("승인 여부가 모순된 PENDING 결제는 확인 필요로 올린다")
+    void markConfirmReconciliationRequired_marksPendingPayment() {
+        String email = newBuyerEmail();
+        Long paymentId = refundScenarioSeeder.readyPayment(email).paymentId();
+        paymentConfirmCommandService.startConfirm(email, paymentId, "pending-reconciliation-key");
+
+        paymentConfirmCommandService.markConfirmReconciliationRequired(paymentId);
+
+        assertThat(paymentRepository.findById(paymentId).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
+    }
+
+    @Test
     @DisplayName("환불이 확인되면 장부에 반영하고 활성 건에서 뺀다")
     void resolveRefund_asRefunded_appliesLedger() {
         RefundTarget target = refundScenarioSeeder.refundStuckInReconciliationRequired(newBuyerEmail());

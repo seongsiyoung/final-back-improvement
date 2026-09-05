@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
+
 /**
  * PG는 승인했는데 우리 DB엔 반영되지 않은 PENDING 결제를 정리한다.
  * 웹훅(빠른 경로)과 재조회 배치(안전망)가 이 서비스를 공유한다.
@@ -22,6 +24,8 @@ public class PaymentReconciliationService {
 
     private static final String DONE_STATUS = "DONE";
     private static final String CANCELED_STATUS = "CANCELED";
+    private static final String PARTIAL_CANCELED_STATUS = "PARTIAL_CANCELED";
+    private static final Set<String> FAILED_STATUSES = Set.of("ABORTED", CANCELED_STATUS, "EXPIRED");
 
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentConfirmCommandService paymentConfirmCommandService;
@@ -61,12 +65,19 @@ public class PaymentReconciliationService {
         }
 
         try {
-            if (DONE_STATUS.equals(pg.getStatus())) {
+            String status = pg.getStatus();
+            if (DONE_STATUS.equals(status)) {
                 paymentConfirmCommandService.completeConfirm(payment.getId(), pg.getPaymentKey(), pg);
-            } else {
-                log.info("PG 상태가 DONE이 아니어서 실패 처리함. paymentId={}, status={}",
-                        payment.getId(), pg.getStatus());
+            } else if (PARTIAL_CANCELED_STATUS.equals(status)) {
+                log.error("PG 결제가 부분 취소돼 확인 필요로 남김. paymentId={}, status={}", payment.getId(), status);
+                paymentConfirmCommandService.markConfirmReconciliationRequired(payment.getId());
+            } else if (status != null && FAILED_STATUSES.contains(status)) {
+                log.info("PG가 실패를 확정해 실패 처리함. paymentId={}, status={}",
+                        payment.getId(), status);
                 paymentConfirmCommandService.failPending(payment.getId());
+            } else {
+                log.info("PG 상태가 아직 종결되지 않아 유지함. paymentId={}, status={}",
+                        payment.getId(), status);
             }
         } catch (BusinessException e) {
             if (e.getErrorCode() == ErrorCode.ALREADY_PROCESSED_PAYMENT) {

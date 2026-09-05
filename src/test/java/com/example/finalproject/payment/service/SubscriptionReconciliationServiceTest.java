@@ -24,6 +24,8 @@ import java.time.LocalDate;
 import java.util.Collections;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -104,15 +106,50 @@ class SubscriptionReconciliationServiceTest extends IntegrationTestSupport {
         assertThat(subscriptionOf(payment).getNextPaymentDate()).isEqualTo(beforeNextPaymentDate);
     }
 
-    @Test
-    @DisplayName("Toss 상태가 DONE이 아니면 실패로 확정한다")
-    void pending_whenNotDoneAtPg_marksFailed() {
+    @ParameterizedTest
+    @ValueSource(strings = {"ABORTED", "CANCELED", "EXPIRED"})
+    @DisplayName("Toss가 승인 실패를 확정하면 실패로 확정한다")
+    void pending_whenTerminalFailureAtPg_marksFailed(String status) {
         SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
-        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus("ABORTED"));
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus(status));
 
         subscriptionReconciliationService.reconcile(payment);
 
         assertThat(statusOf(payment)).isEqualTo(PaymentStatus.FAILED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"IN_PROGRESS", "WAITING_FOR_DEPOSIT", "NEW_STATUS"})
+    @DisplayName("Toss 상태가 종결되지 않았으면 실패로 확정하지 않고 다음 재조정을 기다린다")
+    void pending_whenStatusIsNotTerminalAtPg_keepsPending(String status) {
+        SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus(status));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment)).isEqualTo(PaymentStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("Toss 상태가 없으면 실패로 확정하지 않고 다음 재조정을 기다린다")
+    void pending_whenStatusIsMissingAtPg_keepsPending() {
+        SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus(null));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment)).isEqualTo(PaymentStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("Toss가 부분 취소 상태면 관리자 확인 대상으로 올린다")
+    void pending_whenPartiallyCanceledAtPg_marksReconciliationRequired() {
+        SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus("PARTIAL_CANCELED"));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment)).isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
     }
 
     @Test

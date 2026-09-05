@@ -162,7 +162,8 @@ public class PaymentConfirmCommandService {
     public void markConfirmReconciliationRequired(Long paymentId) {
         Payment payment = paymentRepository.findWithLockById(paymentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
-        if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
+        if (payment.getPaymentStatus() == PaymentStatus.PENDING
+                || payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
             payment.markReconciliationRequired();
         }
     }

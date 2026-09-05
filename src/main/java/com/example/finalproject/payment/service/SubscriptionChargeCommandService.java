@@ -162,7 +162,8 @@ public class SubscriptionChargeCommandService {
     @Transactional
     public void markReconciliationRequired(Long subscriptionPaymentId) {
         subscriptionPaymentRepository.findById(subscriptionPaymentId)
-                .filter(payment -> payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING)
+                .filter(payment -> payment.getPaymentStatus() == PaymentStatus.PENDING
+                        || payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING)
                 .ifPresent(SubscriptionPayment::markReconciliationRequired);
     }
 

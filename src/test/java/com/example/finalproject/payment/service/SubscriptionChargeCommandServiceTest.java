@@ -141,6 +141,17 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
                 .isInstanceOf(BusinessException.class);
     }
 
+    @Test
+    void markReconciliationRequired_whenPaymentIsPending_marksReconciliationRequired() {
+        Subscription subscription = createActiveSubscriptionFixture();
+        SubscriptionPayment payment = subscriptionPaymentRepository.save(newPayment(subscription, "SUB-PENDING-"));
+
+        subscriptionChargeCommandService.markReconciliationRequired(payment.getId());
+
+        assertThat(subscriptionPaymentRepository.findById(payment.getId()).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
+    }
+
     private SubscriptionPayment newPayment(Subscription subscription, String orderPrefix) {
         return SubscriptionPayment.builder()
                 .subscription(subscription)

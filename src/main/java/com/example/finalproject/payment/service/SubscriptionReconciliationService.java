@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
+
 /**
  * 결과가 미확정인 채로 멈춘 구독 결제를 정리한다. 일반 결제의
  * PaymentReconciliationService 와 같은 기준으로 판단한다.
@@ -22,6 +24,8 @@ public class SubscriptionReconciliationService {
 
     private static final String DONE_STATUS = "DONE";
     private static final String CANCELED_STATUS = "CANCELED";
+    private static final String PARTIAL_CANCELED_STATUS = "PARTIAL_CANCELED";
+    private static final Set<String> FAILED_STATUSES = Set.of("ABORTED", CANCELED_STATUS, "EXPIRED");
 
     private final TossPaymentsClient tossPaymentsClient;
     private final SubscriptionChargeCommandService subscriptionChargeCommandService;
@@ -65,10 +69,24 @@ public class SubscriptionReconciliationService {
             return;
         }
 
-        if (!DONE_STATUS.equals(pg.getStatus())) {
-            log.info("[SUB_RECONCILE_NOT_DONE] PG 상태가 DONE 이 아니어서 실패 처리함. "
-                    + "subscriptionPaymentId={}, status={}", paymentId, pg.getStatus());
+        String pgStatus = pg.getStatus();
+        if (PARTIAL_CANCELED_STATUS.equals(pgStatus)) {
+            log.error("[SUB_RECONCILE_PARTIAL_CANCELED] PG 결제가 부분 취소돼 확인 필요로 남김. "
+                    + "subscriptionPaymentId={}, status={}", paymentId, pgStatus);
+            subscriptionChargeCommandService.markReconciliationRequired(paymentId);
+            return;
+        }
+
+        if (pgStatus != null && FAILED_STATUSES.contains(pgStatus)) {
+            log.info("[SUB_RECONCILE_FAILED] PG가 실패를 확정해 실패 처리함. "
+                    + "subscriptionPaymentId={}, status={}", paymentId, pgStatus);
             subscriptionChargeCommandService.failCharge(paymentId);
+            return;
+        }
+
+        if (!DONE_STATUS.equals(pgStatus)) {
+            log.info("[SUB_RECONCILE_UNRESOLVED] PG 상태가 아직 종결되지 않아 유지함. "
+                    + "subscriptionPaymentId={}, status={}", paymentId, pgStatus);
             return;
         }
 
