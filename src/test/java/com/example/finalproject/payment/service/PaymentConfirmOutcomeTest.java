@@ -2,6 +2,7 @@ package com.example.finalproject.payment.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.finalproject.global.exception.custom.BusinessException;
+import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.client.TossPaymentsClient;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
@@ -34,6 +36,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
@@ -74,10 +77,13 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
         when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(readTimeout());
         when(tossPaymentsClient.getPaymentByOrderId(pgOrderId(scenario))).thenReturn(responseWithStatus(pgStatus));
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
 
         assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.FAILED);
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_REJECTED);
+        assertThat(exception.getErrorCode().getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(exception.getCause()).isInstanceOf(RetryableException.class);
         verify(tossPaymentsClient, times(1)).getPaymentByOrderId(pgOrderId(scenario));
     }
 
@@ -88,10 +94,12 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
         when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(readTimeout());
         when(tossPaymentsClient.getPaymentByOrderId(pgOrderId(scenario))).thenThrow(notFound());
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
 
         assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.FAILED);
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_REJECTED);
+        assertThat(exception.getCause()).isInstanceOf(RetryableException.class);
         verify(tossPaymentsClient, times(1)).getPaymentByOrderId(pgOrderId(scenario));
     }
 
@@ -102,10 +110,13 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
         when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(readTimeout());
         when(tossPaymentsClient.getPaymentByOrderId(pgOrderId(scenario))).thenReturn(responseWithStatus("IN_PROGRESS"));
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
 
         assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.PENDING);
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_RESULT_PENDING);
+        assertThat(exception.getErrorCode().getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(exception.getCause()).isInstanceOf(RetryableException.class);
         verify(tossPaymentsClient, times(1)).getPaymentByOrderId(pgOrderId(scenario));
     }
 
@@ -117,10 +128,12 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
         when(tossPaymentsClient.getPaymentByOrderId(pgOrderId(scenario)))
                 .thenReturn(responseWithStatus("PARTIAL_CANCELED"));
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
 
         assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_RESULT_PENDING);
+        assertThat(exception.getCause()).isInstanceOf(RetryableException.class);
         verify(tossPaymentsClient, times(1)).getPaymentByOrderId(pgOrderId(scenario));
     }
 
@@ -131,10 +144,12 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
         when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(readTimeout());
         when(tossPaymentsClient.getPaymentByOrderId(pgOrderId(scenario))).thenThrow(readTimeout());
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
 
         assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.PENDING);
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_RESULT_PENDING);
+        assertThat(exception.getCause()).isInstanceOf(RetryableException.class);
         verify(tossPaymentsClient, times(1)).getPaymentByOrderId(pgOrderId(scenario));
     }
 
@@ -146,10 +161,12 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
                 "bad request", request, "{\"code\":\"REJECT_CARD_COMPANY\"}".getBytes(StandardCharsets.UTF_8),
                 Collections.emptyMap()));
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
 
-        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.READY);
+        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.FAILED);
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_REJECTED);
+        assertThat(exception.getCause()).isInstanceOf(FeignException.BadRequest.class);
         verify(tossPaymentsClient, never()).getPaymentByOrderId(anyString());
     }
 
@@ -162,10 +179,13 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
                 .circuitBreaker("toss-payment");
         breaker.transitionToOpenState();
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
 
-        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.READY);
+        assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.FAILED);
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_TEMPORARILY_UNAVAILABLE);
+        assertThat(exception.getErrorCode().getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(exception.getCause()).isInstanceOf(RuntimeException.class);
         verify(tossPaymentsClient, never()).confirm(any(), anyString());
         verify(tossPaymentsClient, never()).getPaymentByOrderId(anyString());
     }
@@ -176,8 +196,9 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
         RefundScenarioSeeder.ConfirmScenario scenario = readyPayment();
         when(tossPaymentsClient.confirm(any(), anyString())).thenThrow(readTimeout());
 
-        assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
-                .isInstanceOf(RuntimeException.class);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> paymentService.confirm(scenario.email(), scenario.request()));
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_RESULT_PENDING);
 
         assertThatThrownBy(() -> paymentService.confirm(scenario.email(), scenario.request()))
                 .isInstanceOf(BusinessException.class);

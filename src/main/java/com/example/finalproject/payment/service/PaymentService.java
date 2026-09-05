@@ -134,40 +134,59 @@ public class PaymentService {
             PgCallOutcome outcome = PgFailureClassifier.classify(e);
             log.error("[PG_CONFIRM_ERROR] paymentId={}, outcome={}, error={}",
                     paymentId, outcome, e.getMessage(), e);
-            if (outcome == PgCallOutcome.NOT_SENT || outcome == PgCallOutcome.EXPLICIT_REJECTION) {
-                paymentConfirmCommandService.revertPendingToReady(paymentId);
-            }
             if (outcome == PgCallOutcome.RESULT_UNKNOWN) {
-                TossConfirmResponse pg = lookupPaymentOnce(paymentId, confirmRequest.getOrderId());
-                if (pg != null && "DONE".equals(pg.getStatus())) {
-                    return pg;
+                PgLookupResult lookup = lookupPaymentOnce(paymentId, confirmRequest.getOrderId());
+                if (lookup.outcome() == PgCallOutcome.SUCCESS) {
+                    return lookup.response();
                 }
+                outcome = lookup.outcome();
             }
-            throw e;
+            if (outcome == PgCallOutcome.NOT_SENT || outcome == PgCallOutcome.EXPLICIT_REJECTION) {
+                paymentConfirmCommandService.failPending(paymentId);
+            }
+            throw new BusinessException(errorCodeFor(outcome), e);
         }
     }
 
-    private TossConfirmResponse lookupPaymentOnce(Long paymentId, String pgOrderId) {
+    private PgLookupResult lookupPaymentOnce(Long paymentId, String pgOrderId) {
         TossConfirmResponse pg;
         try {
             pg = circuitBreakerFactory.create("toss-payment")
                     .run(() -> tossPaymentsClient.getPaymentByOrderId(pgOrderId), TossCircuitBreakerFallback::rethrow);
         } catch (FeignException.NotFound e) {
-            paymentConfirmCommandService.failPending(paymentId);
-            return null;
+            return new PgLookupResult(PgCallOutcome.EXPLICIT_REJECTION, null);
         } catch (RuntimeException e) {
             log.error("[PG_CONFIRM_LOOKUP_ERROR] paymentId={}, pgOrderId={}, error={}",
                     paymentId, pgOrderId, e.getMessage(), e);
-            return null;
+            return new PgLookupResult(PgCallOutcome.RESULT_UNKNOWN, null);
+        }
+
+        if (pg == null) {
+            return new PgLookupResult(PgCallOutcome.RESULT_UNKNOWN, null);
         }
 
         String status = pg.getStatus();
+        if ("DONE".equals(status)) {
+            return new PgLookupResult(PgCallOutcome.SUCCESS, pg);
+        }
         if ("PARTIAL_CANCELED".equals(status)) {
             paymentConfirmCommandService.markConfirmReconciliationRequired(paymentId);
         } else if (FAILED_PG_STATUSES.contains(status)) {
-            paymentConfirmCommandService.failPending(paymentId);
+            return new PgLookupResult(PgCallOutcome.EXPLICIT_REJECTION, null);
         }
-        return pg;
+        return new PgLookupResult(PgCallOutcome.RESULT_UNKNOWN, null);
+    }
+
+    private ErrorCode errorCodeFor(PgCallOutcome outcome) {
+        return switch (outcome) {
+            case EXPLICIT_REJECTION -> ErrorCode.PAYMENT_REJECTED;
+            case NOT_SENT -> ErrorCode.PAYMENT_TEMPORARILY_UNAVAILABLE;
+            case RESULT_UNKNOWN -> ErrorCode.PAYMENT_RESULT_PENDING;
+            case SUCCESS -> throw new IllegalStateException("성공한 PG 호출은 예외 응답으로 변환할 수 없습니다.");
+        };
+    }
+
+    private record PgLookupResult(PgCallOutcome outcome, TossConfirmResponse response) {
     }
 
     private PostPaymentConfirmResponse completeConfirmOrCancel(
