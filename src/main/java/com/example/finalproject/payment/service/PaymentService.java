@@ -28,10 +28,12 @@ import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.user.domain.Address;
 import com.example.finalproject.user.domain.User;
+import feign.FeignException;
 import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,6 +57,7 @@ public class PaymentService {
             PaymentStatus.REVERSAL_PENDING,
             PaymentStatus.RECONCILIATION_REQUIRED
     );
+    private static final Set<String> FAILED_PG_STATUSES = Set.of("ABORTED", "CANCELED", "EXPIRED");
 
     private final UserLoader userLoader;
     private final ProductRepository productRepository;
@@ -134,8 +137,37 @@ public class PaymentService {
             if (outcome == PgCallOutcome.NOT_SENT || outcome == PgCallOutcome.EXPLICIT_REJECTION) {
                 paymentConfirmCommandService.revertPendingToReady(paymentId);
             }
+            if (outcome == PgCallOutcome.RESULT_UNKNOWN) {
+                TossConfirmResponse pg = lookupPaymentOnce(paymentId, confirmRequest.getOrderId());
+                if (pg != null && "DONE".equals(pg.getStatus())) {
+                    return pg;
+                }
+            }
             throw e;
         }
+    }
+
+    private TossConfirmResponse lookupPaymentOnce(Long paymentId, String pgOrderId) {
+        TossConfirmResponse pg;
+        try {
+            pg = circuitBreakerFactory.create("toss-payment")
+                    .run(() -> tossPaymentsClient.getPaymentByOrderId(pgOrderId), TossCircuitBreakerFallback::rethrow);
+        } catch (FeignException.NotFound e) {
+            paymentConfirmCommandService.failPending(paymentId);
+            return null;
+        } catch (RuntimeException e) {
+            log.error("[PG_CONFIRM_LOOKUP_ERROR] paymentId={}, pgOrderId={}, error={}",
+                    paymentId, pgOrderId, e.getMessage(), e);
+            return null;
+        }
+
+        String status = pg.getStatus();
+        if ("PARTIAL_CANCELED".equals(status)) {
+            paymentConfirmCommandService.markConfirmReconciliationRequired(paymentId);
+        } else if (FAILED_PG_STATUSES.contains(status)) {
+            paymentConfirmCommandService.failPending(paymentId);
+        }
+        return pg;
     }
 
     private PostPaymentConfirmResponse completeConfirmOrCancel(
