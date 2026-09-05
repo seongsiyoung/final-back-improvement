@@ -20,6 +20,11 @@ public class UserLoader {
                 .orElseThrow(() -> new RuntimeException("User not found"));
     }
 
+    public User loadUserByUsernameWithLock(String username) {
+        return userRepository.findWithLockByEmail(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+    }
+
     /**
      * 유저 불러오기(ID)
      */

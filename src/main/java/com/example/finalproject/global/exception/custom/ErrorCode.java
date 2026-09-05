@@ -157,6 +157,7 @@ public enum ErrorCode {
     INVALID_CANCEL_AMOUNT(HttpStatus.BAD_REQUEST, "PAYMENT-006", "취소 금액이 올바르지 않습니다."),
     INVALID_REFUND_AMOUNT(HttpStatus.BAD_REQUEST, "PAYMENT-007", "환불 금액이 결제 금액을 초과합니다."),
     INVALID_PAYMENT_CANCEL_STATUS(HttpStatus.BAD_REQUEST, "PAYMENT-008", "결제를 취소할 수 있는 상태가 아닙니다."),
+    PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "PAYMENT-009", "결제 결과를 확인 중입니다."),
 
 
     // ORDER (order-checkout)

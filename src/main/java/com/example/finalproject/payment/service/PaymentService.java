@@ -29,6 +29,7 @@ import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.user.domain.Address;
 import com.example.finalproject.user.domain.User;
 import java.time.LocalDateTime;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -42,6 +43,18 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class PaymentService {
+
+    private static final EnumSet<PaymentStatus> ACTIVE_PAYMENT_STATUSES = EnumSet.of(
+            PaymentStatus.READY,
+            PaymentStatus.PENDING,
+            PaymentStatus.REVERSAL_PENDING,
+            PaymentStatus.RECONCILIATION_REQUIRED
+    );
+    private static final EnumSet<PaymentStatus> UNRESOLVED_PAYMENT_STATUSES = EnumSet.of(
+            PaymentStatus.PENDING,
+            PaymentStatus.REVERSAL_PENDING,
+            PaymentStatus.RECONCILIATION_REQUIRED
+    );
 
     private final UserLoader userLoader;
     private final ProductRepository productRepository;
@@ -59,7 +72,9 @@ public class PaymentService {
             String email,
             PostPaymentPrepareRequest request) {
 
-        User user = userLoader.loadUserByUsername(email);
+        User user = userLoader.loadUserByUsernameWithLock(email);
+
+        replaceReadyPaymentOrBlockUnresolvedPayment(user.getId());
 
         validateRequest(request);
 
@@ -78,6 +93,18 @@ public class PaymentService {
                 payment.getPgOrderId(),
                 payment.getAmount()
         );
+    }
+
+    private void replaceReadyPaymentOrBlockUnresolvedPayment(Long userId) {
+        List<Payment> activePayments = paymentRepository.findByOrder_UserIdAndPaymentStatusIn(
+                userId, ACTIVE_PAYMENT_STATUSES);
+
+        if (activePayments.stream().anyMatch(payment ->
+                UNRESOLVED_PAYMENT_STATUSES.contains(payment.getPaymentStatus()))) {
+            throw new BusinessException(ErrorCode.PAYMENT_IN_PROGRESS);
+        }
+
+        activePayments.forEach(Payment::fail);
     }
 
     public PostPaymentConfirmResponse confirm(

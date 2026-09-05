@@ -53,6 +53,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Payment> findWithLockByOrder_Id(Long orderId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    List<Payment> findByOrder_UserIdAndPaymentStatusIn(Long userId, Collection<PaymentStatus> paymentStatuses);
+
     Optional<Payment> findByPgOrderId(String pgOrderId);
 
     /** 재조정 대상. 오래된 것부터 상한만큼만 가져온다. */
