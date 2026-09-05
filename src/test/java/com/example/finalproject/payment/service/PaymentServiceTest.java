@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,7 +56,7 @@ class PaymentServiceTest {
     }
 
     @Test
-    void confirm_whenCompleteConfirmAndCancelBothFail_preservesOriginalException_andStillCallsFailPending() {
+    void confirm_whenCompleteConfirmAndCancelBothFail_preservesOriginalException_andKeepsReversalPending() {
         TossConfirmRequest tossRequest = new TossConfirmRequest("pk-1", "order-1", 15000);
         when(paymentConfirmCommandService.startConfirm(eq("user@test.com"), eq(1L), eq("pk-1")))
                 .thenReturn(tossRequest);
@@ -74,8 +75,8 @@ class PaymentServiceTest {
         // 취소 보상 실패가 원래 원인(재고 부족)을 대체하지 않아야 한다.
         org.assertj.core.api.Assertions.assertThat(thrown).isSameAs(stockFailure);
         org.assertj.core.api.Assertions.assertThat(thrown.getSuppressed()).contains(cancelFailure);
-        // 취소 보상이 실패해도 failPending은 반드시 호출돼야 한다.
-        verify(paymentConfirmCommandService).failPending(1L);
+        verify(paymentConfirmCommandService).markReversalPending(1L);
+        verify(paymentConfirmCommandService, never()).failReversalPending(1L);
     }
 
     @Test
@@ -94,6 +95,7 @@ class PaymentServiceTest {
 
         org.assertj.core.api.Assertions.assertThat(thrown).isSameAs(stockFailure);
         verify(tossPaymentsClient).cancel(eq("pk-1"), any(), any());
-        verify(paymentConfirmCommandService).failPending(1L);
+        verify(paymentConfirmCommandService).markReversalPending(1L);
+        verify(paymentConfirmCommandService).failReversalPending(1L);
     }
 }

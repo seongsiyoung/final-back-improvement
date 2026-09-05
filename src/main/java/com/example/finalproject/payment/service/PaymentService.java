@@ -22,6 +22,8 @@ import com.example.finalproject.payment.config.TossCircuitBreakerFallback;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
 import com.example.finalproject.payment.repository.PaymentRepository;
+import com.example.finalproject.payment.service.pg.PgCallOutcome;
+import com.example.finalproject.payment.service.pg.PgFailureClassifier;
 import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.user.domain.Address;
@@ -99,7 +101,12 @@ public class PaymentService {
             return circuitBreakerFactory.create("toss-payment")
                     .run(() -> tossPaymentsClient.confirm(confirmRequest, idempotencyKey), TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException e) {
-            paymentConfirmCommandService.revertPendingToReady(paymentId);
+            PgCallOutcome outcome = PgFailureClassifier.classify(e);
+            log.error("[PG_CONFIRM_ERROR] paymentId={}, outcome={}, error={}",
+                    paymentId, outcome, e.getMessage(), e);
+            if (outcome == PgCallOutcome.NOT_SENT || outcome == PgCallOutcome.EXPLICIT_REJECTION) {
+                paymentConfirmCommandService.revertPendingToReady(paymentId);
+            }
             throw e;
         }
     }
@@ -121,6 +128,7 @@ public class PaymentService {
     }
 
     private void cancelApprovedPayment(Long paymentId, String paymentKey, int amount, BusinessException original) {
+        paymentConfirmCommandService.markReversalPending(paymentId);
         try {
             String idempotencyKey = TossIdempotencyKeys.forCompensatingCancel(paymentId);
             circuitBreakerFactory.create("toss-payment")
@@ -129,15 +137,18 @@ public class PaymentService {
                         return null;
                     }, TossCircuitBreakerFallback::rethrow);
         } catch (RuntimeException cancelFailure) {
+            PgCallOutcome outcome = PgFailureClassifier.classify(cancelFailure);
             // 보상 취소 자체가 실패해도 원래 실패 원인(original)을 대체하지 않는다 — 재고 부족 등
             // 원래 원인이 사라지고 취소 실패 예외로 뒤바뀌면 클라이언트가 진짜 원인을 알 수 없다.
-            log.error("결제 승인 반영 실패 후 PG 취소 보상도 실패함. paymentId={}, paymentKey={}",
-                    paymentId, paymentKey, cancelFailure);
+            log.error("[PG_REVERSAL_ERROR] paymentId={}, paymentKey={}, outcome={}",
+                    paymentId, paymentKey, outcome, cancelFailure);
             original.addSuppressed(cancelFailure);
+            if (outcome == PgCallOutcome.EXPLICIT_REJECTION) {
+                paymentConfirmCommandService.markConfirmReconciliationRequired(paymentId);
+            }
+            return;
         }
-        // 취소 보상이 실패해도 failPending은 반드시 호출한다 — 그렇지 않으면 Payment가
-        // PENDING에 영구히 남아 재시도조차 불가능해진다.
-        paymentConfirmCommandService.failPending(paymentId);
+        paymentConfirmCommandService.failReversalPending(paymentId);
     }
 
 

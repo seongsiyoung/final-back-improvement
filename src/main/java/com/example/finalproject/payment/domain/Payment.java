@@ -120,6 +120,9 @@ public class Payment extends BaseTimeEntity {
     }
 
     public void applyCumulativeCanceledAmount(int cumulativeCanceledAmount) {
+        if (this.refundedAmount != null && cumulativeCanceledAmount < this.refundedAmount) {
+            throw new BusinessException(ErrorCode.INVALID_REFUND_AMOUNT);
+        }
         this.refundedAmount = cumulativeCanceledAmount;
 
         if (this.refundedAmount >= this.amount) {
@@ -145,7 +148,41 @@ public class Payment extends BaseTimeEntity {
         this.paymentStatus = PaymentStatus.REFUND_REQUESTED;
     }
 
-    public void revertToPaid() {
-        this.paymentStatus = PaymentStatus.APPROVED;
+    public void markReversalPending() {
+        if (this.paymentStatus != PaymentStatus.PENDING) {
+            throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
+        }
+        this.paymentStatus = PaymentStatus.REVERSAL_PENDING;
+    }
+
+    public void markReconciliationRequired() {
+        this.paymentStatus = PaymentStatus.RECONCILIATION_REQUIRED;
+    }
+
+    public void resolveReconciliationAsRefunded(int cumulativeCanceledAmount) {
+        validateReconciliationRequired();
+        applyCumulativeCanceledAmount(cumulativeCanceledAmount);
+    }
+
+    public void resolveReconciliationAsNotRefunded() {
+        validateReconciliationRequired();
+        this.paymentStatus = (this.refundedAmount == null || this.refundedAmount == 0)
+                ? PaymentStatus.APPROVED
+                : PaymentStatus.PARTIAL_REFUNDED;
+    }
+
+    private void validateReconciliationRequired() {
+        if (this.paymentStatus != PaymentStatus.RECONCILIATION_REQUIRED) {
+            throw new BusinessException(ErrorCode.INVALID_PAYMENT_CANCEL_STATUS);
+        }
+    }
+
+    public void revertRefundRequest() {
+        if (this.paymentStatus != PaymentStatus.REFUND_REQUESTED) {
+            throw new BusinessException(ErrorCode.INVALID_PAYMENT_CANCEL_STATUS);
+        }
+        this.paymentStatus = (this.refundedAmount == null || this.refundedAmount == 0)
+                ? PaymentStatus.APPROVED
+                : PaymentStatus.PARTIAL_REFUNDED;
     }
 }

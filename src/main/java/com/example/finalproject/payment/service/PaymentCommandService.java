@@ -12,10 +12,10 @@ import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,7 +40,7 @@ public class PaymentCommandService {
 
         validateRefundRequest(payment, cancelAmount, pgCumulativeAmount);
 
-        saveRefundHistory(storeOrderId, cancelAmount, reason, payment);
+        saveRefundHistory(storeOrderId, cancelAmount);
 
         PaymentStatus before = payment.getPaymentStatus();
         updatePaymentStatus(pgCumulativeAmount, payment);
@@ -52,9 +52,9 @@ public class PaymentCommandService {
     }
 
     @Transactional
-    public void markRefundRequested(Long orderId) {
+    public void startRefund(RefundTarget target) {
 
-        Payment payment = findPaymentWithLock(orderId);
+        Payment payment = findPaymentWithLock(target.orderId());
 
         if (payment.getPaymentStatus() == PaymentStatus.REFUND_REQUESTED) {
             throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
@@ -65,23 +65,93 @@ public class PaymentCommandService {
         }
 
         payment.markRefundRequested();
+
+        paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
+                .ifPresentOrElse(
+                        PaymentRefund::markPgPending,
+                        () -> createPgPendingRefund(payment, target));
+    }
+
+    private void createPgPendingRefund(Payment payment, RefundTarget target) {
+        StoreOrder storeOrder = storeOrderRepository.findById(target.storeOrderId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORE_ORDER_NOT_FOUND));
+
+        paymentRefundRepository.save(
+                PaymentRefund.builder()
+                        .payment(payment)
+                        .storeOrder(storeOrder)
+                        .refundAmount(target.amount())
+                        .refundReason(target.reason())
+                        .refundStatus(RefundStatus.PG_PENDING)
+                        .responsibility(RefundResponsibility.PLATFORM)
+                        .isSettled(false)
+                        .build());
     }
 
     @Transactional
-    public void revertRefundRequestAndMarkFailed(Long orderId, Long storeOrderId) {
+    public void handleCancelRejection(RefundTarget target) {
+        Payment payment = findPaymentWithLock(target.orderId());
+        StoreOrder storeOrder = storeOrderRepository.findById(target.storeOrderId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORE_ORDER_NOT_FOUND));
 
-        Payment payment = findPaymentWithLock(orderId);
-
-        if (payment.getPaymentStatus() == PaymentStatus.REFUND_REQUESTED) {
-            payment.revertToPaid();
+        switch (storeOrder.getStatus()) {
+            case CANCEL_REQUESTED -> {
+                storeOrder.revertCancelRequest();
+                payment.revertRefundRequest();
+            }
+            case REFUND_REQUESTED -> {
+                storeOrder.revertRefundRequest();
+                payment.revertRefundRequest();
+            }
+            case REJECT_REQUESTED -> payment.markReconciliationRequired();
+            default -> {
+                log.error("[CANCEL_REJECTION_STATE_MISMATCH] storeOrderId={}, status={}",
+                        target.storeOrderId(), storeOrder.getStatus());
+                payment.markReconciliationRequired();
+            }
         }
 
-        // storeOrderId 조회는 락 없이 한다 — markRefundRequested()가 이미
-        // REFUND_REQUESTED 상태에서는 새 환불 시도를 막아, Payment 하나당 동시에
-        // 진행 중인 환불 취소가 하나뿐임을 보장한다. 이 불변조건이 깨지면(예: 같은
-        // Payment에 여러 StoreOrder 환불을 동시 처리하도록 확장) 여기도 락이 필요해진다.
-        paymentRefundRepository.findByStoreOrder_Id(storeOrderId)
+        paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
                 .ifPresent(PaymentRefund::markPgRejected);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markPgApproved(Long storeOrderId) {
+        paymentRefundRepository.findActiveByStoreOrderId(storeOrderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND))
+                .markPgApproved();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markRefundReconciliationRequired(RefundTarget target) {
+        Payment payment = findPaymentWithLock(target.orderId());
+
+        // 다른 경로가 먼저 환불을 확정했다면 그 결제는 정상 종결이다.
+        // 덮어쓰면 성공한 환불이 장애로 보이고, markRefundRequested 가
+        // RECONCILIATION_REQUIRED 를 거부해 이후 환불까지 막힌다.
+        if (payment.getPaymentStatus() == PaymentStatus.REFUNDED
+                || payment.getPaymentStatus() == PaymentStatus.PARTIAL_REFUNDED) {
+            log.warn("[REFUND_RECONCILE_SKIPPED_ALREADY_REFUNDED] orderId={}, storeOrderId={}, status={}",
+                    target.orderId(), target.storeOrderId(), payment.getPaymentStatus());
+            return;
+        }
+
+        payment.markReconciliationRequired();
+        paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
+                .ifPresent(PaymentRefund::markReconciliationRequired);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean isRefundAlreadyApplied(RefundTarget target) {
+        Payment payment = findPaymentWithLock(target.orderId());
+        if (payment.getPaymentStatus() != PaymentStatus.REFUNDED
+                && payment.getPaymentStatus() != PaymentStatus.PARTIAL_REFUNDED) {
+            return false;
+        }
+        return paymentRefundRepository.findByStoreOrderIdOrderByCreatedAtDesc(target.storeOrderId()).stream()
+                .findFirst()
+                .map(refund -> refund.getRefundStatus() == RefundStatus.APPROVED)
+                .orElse(false);
     }
 
     private Payment findPaymentWithLock(Long orderId) {
@@ -127,38 +197,9 @@ public class PaymentCommandService {
         }
     }
 
-    private void saveRefundHistory(Long storeOrderId,
-                                   Integer cancelAmount,
-                                   String reason,
-                                   Payment payment) {
-
-        StoreOrder storeOrder = storeOrderRepository.findById(storeOrderId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.STORE_ORDER_NOT_FOUND));
-
-        // 최근 환불 요청이 있는지 확인
-        Optional<PaymentRefund> optionalRefund = paymentRefundRepository.findByStoreOrder_Id(storeOrderId);
-
-        if (optionalRefund.isPresent()) {
-
-            PaymentRefund refund = optionalRefund.get();
-
-            refund.adminApprove(cancelAmount);
-
-        } else {
-            paymentRefundRepository.save(
-                    PaymentRefund.builder()
-                            .payment(payment)
-                            .storeOrder(storeOrder)
-                            .refundAmount(cancelAmount)
-                            .refundReason(reason)
-                            .refundStatus(RefundStatus.APPROVED)
-                            .responsibility(RefundResponsibility.PLATFORM)
-                            .isSettled(false)
-                            .build()
-            );
-        }
+    private void saveRefundHistory(Long storeOrderId, Integer cancelAmount) {
+        PaymentRefund refund = paymentRefundRepository.findActiveByStoreOrderId(storeOrderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND));
+        refund.adminApprove(cancelAmount);
     }
 }
-
-
-

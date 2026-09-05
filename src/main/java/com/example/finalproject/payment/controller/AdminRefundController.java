@@ -5,6 +5,7 @@ import com.example.finalproject.payment.dto.request.PostPaymentRefundApproveRequ
 import com.example.finalproject.payment.dto.response.GetAdminRefundDetailResponse;
 import com.example.finalproject.payment.dto.response.GetAdminRefundListResponse;
 import com.example.finalproject.payment.enums.RefundStatus;
+import com.example.finalproject.payment.dto.request.AdminResolveReconciliationRequest;
 import com.example.finalproject.payment.service.AdminRefundCommandService;
 import com.example.finalproject.payment.service.AdminRefundService;
 import jakarta.validation.Valid;
@@ -59,6 +60,15 @@ public class AdminRefundController {
     @PostMapping("/{refundId}/retry")
     public ResponseEntity<ApiResponse<Void>> retry(@PathVariable Long refundId) {
         adminRefundCommandService.retry(refundId);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @PostMapping("/{refundId}/resolve")
+    public ResponseEntity<ApiResponse<Void>> resolve(
+            @PathVariable Long refundId,
+            @Valid @RequestBody AdminResolveReconciliationRequest request) {
+        adminRefundCommandService.resolveReconciliation(
+                refundId, request.getOutcome(), request.getConfirmedAmount());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

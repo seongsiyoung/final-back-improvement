@@ -88,7 +88,7 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
     }
 
     @Test
-    void retryAfterTimeout_sendsSameIdempotencyKeyToToss() {
+    void retryAfterTimeout_doesNotSendSecondConfirmationToToss() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         PostPaymentConfirmRequest confirmRequest = new PostPaymentConfirmRequest();
@@ -104,27 +104,22 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
         assertThat(firstResponse.getBody().isSuccess()).isFalse();
         assertThat(firstResponse.getBody().getError().getCode()).isEqualTo("COMMON-000");
 
-        toss.stubConfirmSuccess();
         ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> secondResponse = restTemplate.exchange(
                 "/api/payments/confirm", HttpMethod.POST, entity,
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
-        assertThat(secondResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(secondResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(secondResponse.getBody()).isNotNull();
-        assertThat(secondResponse.getBody().isSuccess()).isTrue();
-        assertThat(secondResponse.getBody().getData().getStatus()).isNotBlank();
+        assertThat(secondResponse.getBody().isSuccess()).isFalse();
 
         List<ServeEvent> confirmCalls = toss.server.getAllServeEvents().stream()
                 .filter(e -> e.getRequest().getUrl().equals("/v1/payments/confirm"))
                 .toList();
 
-        assertThat(confirmCalls).hasSize(2);
-        String firstKey = confirmCalls.get(1).getRequest().getHeader("Idempotency-Key");
-        String secondKey = confirmCalls.get(0).getRequest().getHeader("Idempotency-Key");
-        assertThat(firstKey).isNotBlank().isEqualTo(secondKey);
+        assertThat(confirmCalls).hasSize(1);
     }
 
     @Test
-    void retryWithDifferentPaymentKey_sendsDifferentIdempotencyKeyToToss() {
+    void retryWithDifferentPaymentKey_doesNotSendSecondConfirmationToToss() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
 
@@ -136,28 +131,19 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
         assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
 
-        toss.stubConfirmSuccess();
         PostPaymentConfirmRequest secondRequest = new PostPaymentConfirmRequest();
         ReflectionTestUtils.setField(secondRequest, "paymentId", paymentId);
         ReflectionTestUtils.setField(secondRequest, "paymentKey", "second-payment-key");
         ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> secondResponse = restTemplate.exchange(
                 "/api/payments/confirm", HttpMethod.POST, new HttpEntity<>(secondRequest, headers),
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
-        assertThat(secondResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(secondResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(secondResponse.getBody()).isNotNull();
+        assertThat(secondResponse.getBody().isSuccess()).isFalse();
 
         List<ServeEvent> confirmCalls = toss.server.getAllServeEvents().stream()
                 .filter(e -> e.getRequest().getUrl().equals("/v1/payments/confirm"))
                 .toList();
-        assertThat(confirmCalls).hasSize(2);
-
-        String firstKey = confirmCalls.get(1).getRequest().getHeader("Idempotency-Key");
-        String secondKey = confirmCalls.get(0).getRequest().getHeader("Idempotency-Key");
-        assertThat(firstKey)
-                .isNotBlank()
-                .doesNotContain("first-payment-key", "second-payment-key");
-        assertThat(secondKey)
-                .isNotBlank()
-                .doesNotContain("first-payment-key", "second-payment-key");
-        assertThat(firstKey).isNotEqualTo(secondKey);
+        assertThat(confirmCalls).hasSize(1);
     }
 }

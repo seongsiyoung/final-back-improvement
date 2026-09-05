@@ -3,7 +3,6 @@ package com.example.finalproject.payment.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.finalproject.payment.domain.WebhookEvent;
-import com.example.finalproject.payment.enums.WebhookEventStatus;
 import com.example.finalproject.payment.repository.WebhookEventRepository;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import java.util.List;
@@ -51,9 +50,10 @@ class WebhookControllerTest extends IntegrationTestSupport {
             assertThat(event.getTransmissionId()).isEqualTo("tx-controller-1");
             assertThat(event.getOrderId()).isEqualTo("order-controller-1");
             assertThat(event.getEventType()).isEqualTo("PAYMENT_STATUS_CHANGED");
-            // 이 커밋 시점에는 WebhookEventReceivedEvent를 소비하는 리스너가 없어
-            // 항상 RECEIVED로 고정된다(Task 6에서 처리 리스너가 붙으면 바뀔 수 있음).
-            assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.RECEIVED);
+            // status 는 단언하지 않는다. WebhookEventListener 가 AFTER_COMMIT + @Async 로
+            // 곧 종결 상태로 바꾸므로 RECEIVED 는 과도 상태다. 이 테스트의 계약은
+            // "수신한 웹훅을 인박스에 저장하고 200 을 반환한다"이며,
+            // 이후 처리 결과는 WebhookEventProcessingIntegrationTest 가 검증한다.
         });
     }
 

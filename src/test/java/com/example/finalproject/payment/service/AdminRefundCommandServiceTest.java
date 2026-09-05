@@ -9,6 +9,7 @@ import com.example.finalproject.global.util.GeometryUtil;
 import com.example.finalproject.order.domain.Order;
 import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.order.enums.OrderType;
+import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.order.repository.OrderRepository;
 import com.example.finalproject.order.repository.StoreOrderRepository;
 import com.example.finalproject.payment.domain.Payment;
@@ -29,8 +30,10 @@ import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
 import com.example.finalproject.user.domain.User;
 import java.time.LocalDateTime;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class AdminRefundCommandServiceTest extends IntegrationTestSupport {
 
@@ -52,13 +55,23 @@ class AdminRefundCommandServiceTest extends IntegrationTestSupport {
     private StoreCategoryRepository storeCategoryRepository;
 
     @Test
-    void retry_whenPgRejected_revertsToRequested() {
-        PaymentRefund refund = createRefundWithStatus(RefundStatus.PG_REJECTED);
+    @DisplayName("PG 거절된 환불을 다시 시도하면 종결 이력을 두고 새 시도를 만든다")
+    void retry_whenPgRejected_createsNewAttempt() {
+        PaymentRefund rejected = createRefundWithStatus(RefundStatus.PG_REJECTED);
+        Long storeOrderId = rejected.getStoreOrder().getId();
 
-        adminRefundCommandService.retry(refund.getId());
+        adminRefundCommandService.retry(rejected.getId());
 
-        PaymentRefund reloaded = paymentRefundRepository.findById(refund.getId()).orElseThrow();
-        assertThat(reloaded.getRefundStatus()).isEqualTo(RefundStatus.REQUESTED);
+        assertThat(paymentRefundRepository.findById(rejected.getId()).orElseThrow().getRefundStatus())
+                .as("종결된 금융 이력을 덮어쓰지 않는다")
+                .isEqualTo(RefundStatus.PG_REJECTED);
+        assertThat(paymentRefundRepository.findActiveByStoreOrderId(storeOrderId))
+                .isPresent()
+                .get()
+                .extracting(PaymentRefund::getRefundStatus)
+                .isEqualTo(RefundStatus.REQUESTED);
+        assertThat(storeOrderRepository.findById(storeOrderId).orElseThrow().getStatus())
+                .isEqualTo(StoreOrderStatus.REFUND_REQUESTED);
     }
 
     @Test
@@ -81,7 +94,22 @@ class AdminRefundCommandServiceTest extends IntegrationTestSupport {
                         .isEqualTo(ErrorCode.INVALID_REFUND_STATUS));
     }
 
+    @Test
+    @DisplayName("고객 취소에서 되살아난 PENDING 주문은 환불 재시도 대상이 아니다")
+    void retry_whenStoreOrderIsNotDelivered_throws() {
+        PaymentRefund refund = createRefundWithStatus(RefundStatus.PG_REJECTED, StoreOrderStatus.PENDING);
+
+        assertThatThrownBy(() -> adminRefundCommandService.retry(refund.getId()))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_STORE_ORDER_REFUND_STATUS));
+    }
+
     private PaymentRefund createRefundWithStatus(RefundStatus status) {
+        return createRefundWithStatus(status, StoreOrderStatus.DELIVERED);
+    }
+
+    private PaymentRefund createRefundWithStatus(RefundStatus status, StoreOrderStatus storeOrderStatus) {
         User owner = seeder.seedUserWithAddress("retry-owner-" + System.nanoTime() + "@test.com", "owner1234!");
         User buyer = seeder.seedUserWithAddress("retry-buyer-" + System.nanoTime() + "@test.com", "buyer1234!");
         StoreCategory storeCategory = storeCategoryRepository.findByCategoryName("마트/슈퍼")
@@ -143,6 +171,9 @@ class AdminRefundCommandServiceTest extends IntegrationTestSupport {
                 .order(order).store(store).orderType(OrderType.REGULAR)
                 .storeProductPrice(2000).deliveryFee(1000).finalPrice(3000)
                 .build());
+        ReflectionTestUtils.setField(storeOrder, "status", storeOrderStatus);
+        ReflectionTestUtils.setField(storeOrder, "deliveredAt", LocalDateTime.now());
+        storeOrderRepository.save(storeOrder);
 
         return paymentRefundRepository.save(PaymentRefund.builder()
                 .payment(payment)

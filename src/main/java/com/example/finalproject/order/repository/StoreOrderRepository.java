@@ -4,10 +4,14 @@ import com.example.finalproject.order.domain.StoreOrder;
 import com.example.finalproject.order.enums.OrderType;
 import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.order.repository.custom.StoreOrderRepositoryCustom;
+import com.example.finalproject.payment.domain.Payment;
+import com.example.finalproject.payment.enums.PaymentStatus;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -67,6 +71,54 @@ public interface StoreOrderRepository extends JpaRepository<StoreOrder, Long>, S
     List<StoreOrder> findByStatus(StoreOrderStatus status);
 
     List<StoreOrder> findByStatusAndCreatedAtBefore(StoreOrderStatus status, LocalDateTime createdAtBefore);
+
+    /** 환불은 끝났는데 주문 후속 처리가 남은 건. */
+    @Query("SELECT so FROM StoreOrder so "
+            + "JOIN Payment p ON p.order.id = so.order.id "
+            + "WHERE p.paymentStatus IN (:paymentStatuses) "
+            + "AND so.status IN (:storeOrderStatuses) "
+            + "AND so.updatedAt < :threshold "
+            + "ORDER BY so.updatedAt ASC")
+    List<StoreOrder> findRefundCompletionLostTargets(
+            @Param("paymentStatuses") Collection<PaymentStatus> paymentStatuses,
+            @Param("storeOrderStatuses") Collection<StoreOrderStatus> storeOrderStatuses,
+            @Param("threshold") LocalDateTime threshold,
+            Pageable pageable);
+
+    @Query(value = "SELECT so.id AS storeOrderId, o.orderNumber AS orderNumber, "
+            + "so.status AS storeOrderStatus, p.paymentStatus AS paymentStatus, "
+            + "so.finalPrice AS amount, so.updatedAt AS updatedAt "
+            + "FROM StoreOrder so JOIN so.order o JOIN Payment p ON p.order.id = o.id "
+            + "WHERE so.status IN :storeOrderStatuses "
+            + "AND p.paymentStatus IN :paymentStatuses "
+            + "ORDER BY so.updatedAt ASC",
+            countQuery = "SELECT COUNT(so) FROM StoreOrder so JOIN Payment p ON p.order.id = so.order.id "
+                    + "WHERE so.status IN :storeOrderStatuses "
+                    + "AND p.paymentStatus IN :paymentStatuses")
+    Page<DanglingReconciliationRow> findDanglingReconciliationRequests(
+            @Param("storeOrderStatuses") Collection<StoreOrderStatus> storeOrderStatuses,
+            @Param("paymentStatuses") Collection<PaymentStatus> paymentStatuses,
+            Pageable pageable);
+
+    @Query("SELECT DISTINCT p.id FROM StoreOrder so JOIN Payment p ON p.order.id = so.order.id "
+            + "WHERE p.id IN :paymentIds AND so.status = :status")
+    Set<Long> findPaymentIdsWithStoreOrderStatus(
+            @Param("paymentIds") Collection<Long> paymentIds,
+            @Param("status") StoreOrderStatus status);
+
+    interface DanglingReconciliationRow {
+        Long getStoreOrderId();
+
+        String getOrderNumber();
+
+        StoreOrderStatus getStoreOrderStatus();
+
+        PaymentStatus getPaymentStatus();
+
+        Integer getAmount();
+
+        LocalDateTime getUpdatedAt();
+    }
 
     // 매출 조회: 주문 유형별 DELIVERED 건수
     @Query("SELECT COUNT(so) FROM StoreOrder so "

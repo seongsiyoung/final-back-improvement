@@ -5,3 +5,7 @@ spring:
     name: Final-Project
   jpa:
     open-in-view: false
+
+reconciliation:
+  batch-size: 100
+  stale-threshold-minutes: 5

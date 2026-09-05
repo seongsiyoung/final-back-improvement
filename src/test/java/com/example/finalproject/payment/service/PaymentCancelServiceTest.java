@@ -33,7 +33,14 @@ import com.example.finalproject.store.repository.StoreRepository;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
 import com.example.finalproject.user.domain.User;
+import feign.Request;
+import feign.Request.HttpMethod;
+import feign.RequestTemplate;
+import feign.RetryableException;
+import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,9 +68,11 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
     private PaymentGateWay paymentGateWay;
 
     @Test
-    void cancel_whenPgCancelFails_marksRefundAsPgRejected_andRevertsPaymentInSameCommit() {
+    void cancel_whenPgOutcomeIsUnknown_keepsPgPendingForReconciliation() {
         StoreOrder[] storeOrders = createApprovedPaymentWithTwoStoreOrders();
         StoreOrder storeOrder = storeOrders[0];
+        storeOrder.requestCancel();
+        storeOrderRepository.save(storeOrder);
         Payment payment = paymentRepository.findByOrder_Id(storeOrder.getOrder().getId()).orElseThrow();
         paymentRefundRepository.save(PaymentRefund.builder()
                 .payment(payment)
@@ -73,16 +82,23 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
                 .build());
 
         when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
-                .thenThrow(new RuntimeException("PG 타임아웃"));
+                .thenThrow(new RetryableException(
+                        -1, "read timed out", HttpMethod.POST,
+                        new SocketTimeoutException("Read timed out"), (Long) null,
+                        Request.create(HttpMethod.POST, "/v1/payments/x/cancel", Collections.emptyMap(),
+                                new byte[0], StandardCharsets.UTF_8, new RequestTemplate())));
 
-        assertThatThrownBy(() -> paymentCancelService.cancel(storeOrder, 1000, "고객 변심"))
+        assertThatThrownBy(() -> paymentCancelService.cancel(new RefundTarget(
+                storeOrder.getOrder().getId(), storeOrder.getId(), 1000, "고객 변심")))
                 .isInstanceOf(BusinessException.class);
 
         Payment reloadedPayment = paymentRepository.findById(payment.getId()).orElseThrow();
-        assertThat(reloadedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(reloadedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.REFUND_REQUESTED);
 
-        PaymentRefund reloadedRefund = paymentRefundRepository.findByStoreOrder_Id(storeOrder.getId()).orElseThrow();
-        assertThat(reloadedRefund.getRefundStatus()).isEqualTo(RefundStatus.PG_REJECTED);
+        PaymentRefund reloadedRefund = paymentRefundRepository.findActiveByStoreOrderId(storeOrder.getId()).orElseThrow();
+        assertThat(reloadedRefund.getRefundStatus()).isEqualTo(RefundStatus.PG_PENDING);
+        assertThat(storeOrderRepository.findById(storeOrder.getId()).orElseThrow().getStatus())
+                .isEqualTo(com.example.finalproject.order.enums.StoreOrderStatus.CANCEL_REQUESTED);
     }
 
     @Test
@@ -92,8 +108,10 @@ class PaymentCancelServiceTest extends IntegrationTestSupport {
         when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
                 .thenReturn(new CancelResult(1000));
 
-        paymentCancelService.cancel(storeOrders[0], 1000, "재고 부족");
-        paymentCancelService.cancel(storeOrders[1], 1000, "재고 부족");
+        paymentCancelService.cancel(new RefundTarget(
+                storeOrders[0].getOrder().getId(), storeOrders[0].getId(), 1000, "재고 부족"));
+        paymentCancelService.cancel(new RefundTarget(
+                storeOrders[1].getOrder().getId(), storeOrders[1].getId(), 1000, "재고 부족"));
 
         ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(paymentGateWay, org.mockito.Mockito.times(2))

@@ -19,7 +19,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -27,8 +26,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "payment_refunds",
-        uniqueConstraints = @UniqueConstraint(name = "uq_refunds_store_order", columnNames = "store_order_id"))
+@Table(name = "payment_refunds")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PaymentRefund extends BaseTimeEntity {
@@ -80,15 +78,17 @@ public class PaymentRefund extends BaseTimeEntity {
         this.refundAmount = refundAmount;
         this.refundReason = refundReason;
         this.refundStatus = refundStatus != null ? refundStatus : RefundStatus.REQUESTED;
-        this.refundedAt = LocalDateTime.now();
         this.responsibility = responsibility;
         this.isSettled = isSettled;
     }
 
+    /**
+     * PG 환불 확인 후 로컬 장부에 반영한다.
+     * refundedAt 은 건드리지 않는다 — 환불이 확인된 시각은 markPgApproved 가 찍는다.
+     */
     public void adminApprove(int refundAmount) {
         this.refundAmount = refundAmount;
         this.refundStatus = RefundStatus.APPROVED;
-        this.refundedAt = LocalDateTime.now();
     }
 
     public void confirmRefundDetails(RefundResponsibility responsibility, int refundAmount) {
@@ -100,19 +100,46 @@ public class PaymentRefund extends BaseTimeEntity {
         this.refundStatus = RefundStatus.REJECTED;
     }
 
+    /**
+     * PG 는 취소했고 로컬 장부 반영만 남았다.
+     * refundedAt 은 여기서만 찍는다 — 기간별 환불 집계의 기준 시각이다.
+     */
     public void markPgApproved() {
         this.refundStatus = RefundStatus.PG_APPROVED;
         this.refundedAt = LocalDateTime.now();
     }
 
-    public void markPgRejected() {
+    public void markPgPending() {
+        if (this.refundStatus != RefundStatus.REQUESTED) {
+            throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
+        }
+        this.refundStatus = RefundStatus.PG_PENDING;
+    }
+
+    public void markReconciliationRequired() {
+        this.refundStatus = RefundStatus.RECONCILIATION_REQUIRED;
+    }
+
+    public void resolveAsRefunded() {
+        validateReconciliationRequired();
+        this.refundStatus = RefundStatus.APPROVED;
+        if (this.refundedAt == null) {
+            this.refundedAt = LocalDateTime.now();
+        }
+    }
+
+    public void resolveAsNotRefunded() {
+        validateReconciliationRequired();
         this.refundStatus = RefundStatus.PG_REJECTED;
     }
 
-    public void revertToRequested() {
-        if (this.refundStatus != RefundStatus.PG_REJECTED) {
+    private void validateReconciliationRequired() {
+        if (this.refundStatus != RefundStatus.RECONCILIATION_REQUIRED) {
             throw new BusinessException(ErrorCode.INVALID_REFUND_STATUS);
         }
-        this.refundStatus = RefundStatus.REQUESTED;
+    }
+
+    public void markPgRejected() {
+        this.refundStatus = RefundStatus.PG_REJECTED;
     }
 }

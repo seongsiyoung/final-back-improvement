@@ -80,6 +80,14 @@ public class LoadTestDataSeeder {
     }
 
     public Store seedStoreWithProducts(int productCount, int stockPerProduct) {
+        return seedStoreWithProducts("load-test-store-owner@test.com", productCount, stockPerProduct);
+    }
+
+    /**
+     * 오너 이메일로 매장을 구분한다. 기본 오버로드는 전역 매장 하나를 재사용하므로,
+     * 한 주문에 매장이 둘인 상황을 만들려면 다른 오너를 줘야 한다.
+     */
+    public Store seedStoreWithProducts(String ownerEmail, int productCount, int stockPerProduct) {
         StoreCategory storeCategory = storeCategoryRepository.findByCategoryName("마트/슈퍼")
                 .orElseGet(() -> storeCategoryRepository.save(StoreCategory.builder().categoryName("마트/슈퍼").build()));
 
@@ -87,12 +95,12 @@ public class LoadTestDataSeeder {
                 .orElseGet(() -> productCategoryRepository.save(
                         ProductCategory.builder().categoryName("채소").iconUrl(null).build()));
 
-        User owner = userRepository.findByEmail("load-test-store-owner@test.com").orElseGet(() ->
+        User owner = userRepository.findByEmail(ownerEmail).orElseGet(() ->
                 userRepository.save(User.builder()
-                        .email("load-test-store-owner@test.com")
+                        .email(ownerEmail)
                         .password(passwordEncoder.encode("owner1234!"))
                         .name("부하테스트오너")
-                        .phone("01099999999")
+                        .phone("0109999" + String.format("%04d", Math.abs(ownerEmail.hashCode() % 10000)))
                         .termsAgreed(true)
                         .privacyAgreed(true)
                         .termsAgreedAt(LocalDateTime.now())
@@ -103,15 +111,15 @@ public class LoadTestDataSeeder {
             Store newStore = storeRepository.save(Store.builder()
                     .owner(owner)
                     .storeCategory(storeCategory)
-                    .storeName("부하테스트마트")
+                    .storeName("부하테스트마트-" + ownerEmail)
                     .phone("02-0000-0000")
                     .description("k6 부하 테스트 전용 스토어")
                     .representativeName("부하테스트오너")
                     .representativePhone("01099999999")
                     .submittedDocumentInfo(SubmittedDocumentInfo.builder()
                             .businessOwnerName("부하테스트오너")
-                            .businessNumber("999999999999")
-                            .telecomSalesReportNumber("제2026-부하-00001")
+                            .businessNumber(String.valueOf(Math.abs(ownerEmail.hashCode() % 1000000000L) + 100000000L))
+                            .telecomSalesReportNumber("제2026-부하-" + Math.abs(ownerEmail.hashCode() % 100000))
                             .build())
                     .address(StoreAddress.builder()
                             .postalCode("06134")

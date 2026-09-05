@@ -161,7 +161,7 @@ public class AdminFinanceService {
         SummaryData summaryData = this.buildPaymentSummary(range.startDateTime(), range.endExclusiveDateTime());
         long regularSalesAmount = this.storeOrderRepository.sumFinalPriceByOrderTypeAndOrderedAtBetween(OrderType.REGULAR, range.startDateTime(), range.endExclusiveDateTime());
         long subscriptionSalesAmount = this.storeOrderRepository.sumFinalPriceByOrderTypeAndOrderedAtBetween(OrderType.SUBSCRIPTION, range.startDateTime(), range.endExclusiveDateTime());
-        return AdminPaymentSummaryResponse.builder().grossPaymentAmount(summaryData.totalAmount()).platformFeeRevenue(summaryData.totalCommission()).refundAmount(summaryData.totalRefundAmount()).netRevenue(summaryData.netRevenue()).paymentCount(summaryData.paymentCount()).refundRequestedCount(this.paymentRefundRepository.countByRefundStatus(RefundStatus.REQUESTED)).refundApprovedCount(this.paymentRefundRepository.countByRefundStatus(RefundStatus.APPROVED)).refundRejectedCount(this.paymentRefundRepository.countByRefundStatus(RefundStatus.REJECTED)).refundRequestedAmount(this.paymentRefundRepository.sumRefundAmountByRefundStatusAndRefundedAtBetween(RefundStatus.REQUESTED, range.startDateTime(), range.endExclusiveDateTime())).refundApprovedAmount(this.paymentRefundRepository.sumRefundAmountByRefundStatusAndRefundedAtBetween(RefundStatus.APPROVED, range.startDateTime(), range.endExclusiveDateTime())).refundRejectedAmount(this.paymentRefundRepository.sumRefundAmountByRefundStatusAndRefundedAtBetween(RefundStatus.REJECTED, range.startDateTime(), range.endExclusiveDateTime())).regularSalesAmount(regularSalesAmount).subscriptionSalesAmount(subscriptionSalesAmount).build();
+        return AdminPaymentSummaryResponse.builder().grossPaymentAmount(summaryData.totalAmount()).platformFeeRevenue(summaryData.totalCommission()).refundAmount(summaryData.totalRefundAmount()).netRevenue(summaryData.netRevenue()).paymentCount(summaryData.paymentCount()).refundRequestedCount(this.paymentRefundRepository.countByRefundStatus(RefundStatus.REQUESTED)).refundApprovedCount(this.paymentRefundRepository.countByRefundStatus(RefundStatus.APPROVED)).refundRejectedCount(this.paymentRefundRepository.countByRefundStatus(RefundStatus.REJECTED)).refundRequestedAmount(this.paymentRefundRepository.sumRefundAmountByRefundStatusAndCreatedAtBetween(RefundStatus.REQUESTED, range.startDateTime(), range.endExclusiveDateTime())).refundApprovedAmount(this.paymentRefundRepository.sumRefundAmountByRefundStatusAndRefundedAtBetween(RefundStatus.APPROVED, range.startDateTime(), range.endExclusiveDateTime())).refundRejectedAmount(this.paymentRefundRepository.sumRefundAmountByRefundStatusAndCreatedAtBetween(RefundStatus.REJECTED, range.startDateTime(), range.endExclusiveDateTime())).regularSalesAmount(regularSalesAmount).subscriptionSalesAmount(subscriptionSalesAmount).build();
     }
 
     public AdminPaymentListResponse getPayments(String adminEmail, String yearMonth, String keyword, Pageable pageable) {
@@ -174,7 +174,7 @@ public class AdminFinanceService {
         Map<Long, Payment> paymentByOrderId = this.paymentRepository.findByOrder_IdIn(orderIds).stream().collect(Collectors.toMap(payment -> payment.getOrder().getId(), payment -> payment, (left, right) -> left));
         HashMap<Long, Long> refundByStoreOrderId = new HashMap<Long, Long>();
         if (!storeOrderIds.isEmpty()) {
-            for (Object[] row : this.paymentRefundRepository.sumRefundAmountGroupByStoreOrderId(storeOrderIds)) {
+            for (Object[] row : this.paymentRefundRepository.sumRefundAmountGroupByStoreOrderId(storeOrderIds, RefundStatus.APPROVED)) {
                 Long storeOrderId = ((Number)row[0]).longValue();
                 Long refundAmount = ((Number)row[1]).longValue();
                 refundByStoreOrderId.put(storeOrderId, refundAmount);
@@ -340,7 +340,7 @@ public class AdminFinanceService {
         Delivery delivery = this.deliveryRepository.findByStoreOrderId(resolvedStoreOrderId).orElse(null);
         Payment payment = this.paymentRepository.findByOrder_Id(storeOrder.getOrder().getId()).orElse(null);
         List<PaymentRefund> refunds = this.paymentRefundRepository.findByStoreOrderIdOrderByCreatedAtDesc(resolvedStoreOrderId);
-        long refundAmount = refunds.stream().map(PaymentRefund::getRefundAmount).filter(Objects::nonNull).mapToLong(Integer::longValue).sum();
+        long refundAmount = refunds.stream().filter(refund -> refund.getRefundStatus() == RefundStatus.APPROVED).map(PaymentRefund::getRefundAmount).filter(Objects::nonNull).mapToLong(Integer::longValue).sum();
         String refundStatus = refunds.isEmpty() ? "NONE" : refunds.get(0).getRefundStatus().name();
         String deliveryLocation = "-";
         if (delivery != null && delivery.getCustomerLocation() != null) {
@@ -544,15 +544,17 @@ public class AdminFinanceService {
 
     private String toPaymentStatusLabel(Payment payment) {
         if (payment == null || payment.getPaymentStatus() == null) {
-            return "\ud655\uc778 \ub300\uae30";
+            return "확인 대기";
         }
         return switch (payment.getPaymentStatus()) {
             default -> throw new MatchException(null, null);
-            case PaymentStatus.APPROVED, PaymentStatus.PARTIAL_REFUNDED -> "\uc9c0\uae09 \ucc98\ub9ac\uc911";
-            case PaymentStatus.REFUNDED, PaymentStatus.CANCELLED -> "\ud658\ubd88 \uc644\ub8cc";
-            case PaymentStatus.REFUND_REQUESTED -> "\ud658\ubd88 \uc694\uccad";
-            case PaymentStatus.FAILED -> "\uacb0\uc81c \uc2e4\ud328";
-            case PaymentStatus.READY, PaymentStatus.PENDING -> "\ud655\uc778 \ub300\uae30";
+            case PaymentStatus.APPROVED, PaymentStatus.PARTIAL_REFUNDED -> "지급 처리중";
+            case PaymentStatus.REFUNDED, PaymentStatus.CANCELLED -> "환불 완료";
+            case PaymentStatus.REFUND_REQUESTED -> "환불 요청";
+            case PaymentStatus.FAILED -> "결제 실패";
+            case PaymentStatus.READY, PaymentStatus.PENDING -> "확인 대기";
+            case PaymentStatus.REVERSAL_PENDING -> "취소 처리중";
+            case PaymentStatus.RECONCILIATION_REQUIRED -> "확인 필요";
         };
     }
 
@@ -582,7 +584,7 @@ public class AdminFinanceService {
         }
         List<Long> storeOrderIds = orders.stream().map(StoreOrder::getId).toList();
         HashMap<Long, Long> refundByStoreOrderId = new HashMap<Long, Long>();
-        for (Object[] row : this.paymentRefundRepository.sumRefundAmountGroupByStoreOrderId(storeOrderIds)) {
+        for (Object[] row : this.paymentRefundRepository.sumRefundAmountGroupByStoreOrderId(storeOrderIds, RefundStatus.APPROVED)) {
             Long storeOrderId = ((Number)row[0]).longValue();
             Long refundAmount = ((Number)row[1]).longValue();
             refundByStoreOrderId.put(storeOrderId, refundAmount);

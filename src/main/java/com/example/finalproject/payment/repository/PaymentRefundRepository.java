@@ -1,11 +1,14 @@
 package com.example.finalproject.payment.repository;
 
+import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.RefundResponsibility;
 import com.example.finalproject.payment.enums.RefundStatus;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.List;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -13,6 +16,14 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Long> {
+
+    /** 아직 종결되지 않은 환불 상태. 활성 건이 하나임을 앱 가드가 지킨다. */
+    List<RefundStatus> ACTIVE_REFUND_STATUSES = List.of(
+            RefundStatus.REQUESTED,
+            RefundStatus.PG_PENDING,
+            RefundStatus.PG_APPROVED,
+            RefundStatus.RECONCILIATION_REQUIRED);
+
     List<PaymentRefund> findByStoreOrderIdOrderByCreatedAtDesc(Long storeOrderId);
 
     @Query(value = "SELECT r FROM PaymentRefund r " +
@@ -34,11 +45,19 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
             "WHERE r.id = :refundId")
     Optional<PaymentRefund> findAdminRefundDetailById(@Param("refundId") Long refundId);
 
+    /**
+     * 호출부 없음. 쓰기 전에 refundStatus 조건을 넣어야 한다 —
+     * 거절된 환불까지 합산된다.
+     */
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0 ) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.payment.id = :paymentId")
     int sumRefundAmountByPaymentId(@Param("paymentId") Long paymentId);
 
+    /**
+     * 호출부 없음. 쓰기 전에 refundStatus 조건을 넣어야 한다.
+     * refundedAt 은 PG 환불이 확인된 시각이라 요청·거절 건에는 없다.
+     */
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.store.id = :storeId "
@@ -54,21 +73,47 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
     @Query("SELECT COALESCE(SUM(pr.storeOrder.storeProductPrice), 0L) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.store.id = :storeId "
+            + "AND pr.refundStatus = :approvedStatus "
             + "AND pr.refundedAt BETWEEN :start AND :end")
     long sumStoreProductPriceByStoreOrderStoreIdAndRefundedAtBetween(
             @Param("storeId") Long storeId,
             @Param("start") LocalDateTime start,
-            @Param("end") LocalDateTime end);
+            @Param("end") LocalDateTime end,
+            @Param("approvedStatus") RefundStatus approvedStatus);
 
-    boolean existsByStoreOrder_Id(Long storeOrderId);
+    /**
+     * 아직 종결되지 않은 환불 한 건을 찾는다.
+     *
+     * <p>PG_REJECTED 와 REJECTED 는 종결로 보고 제외한다. 관리자가 다시 시도하면
+     * 그 이력을 덮어쓰지 않고 새 행을 만든다.
+     *
+     * <p>Optional 이 성립하는 근거는 활성 건을 만드는 세 경로가 모두 Payment 행에
+     * 비관적 락을 먼저 잡기 때문이다 — PaymentCommandService.startRefund,
+     * StoreOrderRefundService.requestRefund, AdminRefundCommandService.retry.
+     * 활성 건 검사와 생성이 그 락 안에서 직렬화된다.
+     * 이 전제가 깨지면 활성 건이 둘이 되어 이 조회가 터진다.
+     */
+    @Query("SELECT pr FROM PaymentRefund pr "
+            + "WHERE pr.storeOrder.id = :storeOrderId "
+            + "AND pr.refundStatus IN (:activeStatuses)")
+    Optional<PaymentRefund> findActiveByStoreOrderId(
+            @Param("storeOrderId") Long storeOrderId,
+            @Param("activeStatuses") Collection<RefundStatus> activeStatuses);
 
-    Optional<PaymentRefund> findByStoreOrder_Id(Long storeOrderId);
+    default Optional<PaymentRefund> findActiveByStoreOrderId(Long storeOrderId) {
+        return findActiveByStoreOrderId(storeOrderId, ACTIVE_REFUND_STATUSES);
+    }
+
+    boolean existsByPayment_IdAndRefundStatusIn(Long paymentId, Collection<RefundStatus> refundStatuses);
 
     @Query("SELECT pr.storeOrder.id, COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.storeOrder.id IN :storeOrderIds "
+            + "AND pr.refundStatus = :approvedStatus "
             + "GROUP BY pr.storeOrder.id")
-    List<Object[]> sumRefundAmountGroupByStoreOrderId(@Param("storeOrderIds") List<Long> storeOrderIds);
+    List<Object[]> sumRefundAmountGroupByStoreOrderId(
+            @Param("storeOrderIds") List<Long> storeOrderIds,
+            @Param("approvedStatus") RefundStatus approvedStatus);
 
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
@@ -86,6 +131,19 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
 
     long countByRefundStatus(RefundStatus refundStatus);
 
+    /**
+     * 요청·거절 집계용. 거절된 환불은 refundedAt 이 영원히 없으므로 createdAt 을 쓴다.
+     */
+    @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
+            + "FROM PaymentRefund pr "
+            + "WHERE pr.refundStatus = :refundStatus "
+            + "AND pr.createdAt BETWEEN :start AND :end")
+    long sumRefundAmountByRefundStatusAndCreatedAtBetween(
+            @Param("refundStatus") RefundStatus refundStatus,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
+
+    /** 승인 집계용. refundedAt 은 PG 환불이 확인된 시각이다. */
     @Query("SELECT COALESCE(SUM(pr.refundAmount), 0) "
             + "FROM PaymentRefund pr "
             + "WHERE pr.refundStatus = :refundStatus "
@@ -94,4 +152,39 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
             @Param("refundStatus") RefundStatus refundStatus,
             @Param("start") LocalDateTime start,
             @Param("end") LocalDateTime end);
+
+    /** 환불 재조정 대상. PG_PENDING 과 PG_APPROVED 를 함께 뽑는다. */
+    @Query("SELECT pr FROM PaymentRefund pr "
+            + "WHERE pr.refundStatus IN (:statuses) "
+            + "AND pr.updatedAt < :threshold "
+            + "ORDER BY pr.updatedAt ASC")
+    List<PaymentRefund> findReconciliationTargets(
+            @Param("statuses") Collection<RefundStatus> statuses,
+            @Param("threshold") LocalDateTime threshold,
+            Pageable pageable);
+
+    Page<PaymentRefund> findByRefundStatusInOrderByUpdatedAtAsc(Collection<RefundStatus> statuses, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"payment", "storeOrder", "storeOrder.order"})
+    @Query(value = "SELECT pr FROM PaymentRefund pr "
+            + "WHERE pr.refundStatus = :reconciliationStatus "
+            + "OR (pr.refundStatus = :pgRejectedStatus "
+            + "AND pr.storeOrder.status = :retryableStoreOrderStatus "
+            + "AND NOT EXISTS (SELECT newer.id FROM PaymentRefund newer "
+            + "WHERE newer.storeOrder = pr.storeOrder AND newer.id > pr.id)) "
+            + "ORDER BY pr.updatedAt ASC",
+            countQuery = "SELECT COUNT(pr) FROM PaymentRefund pr "
+                    + "WHERE pr.refundStatus = :reconciliationStatus "
+                    + "OR (pr.refundStatus = :pgRejectedStatus "
+                    + "AND pr.storeOrder.status = :retryableStoreOrderStatus "
+                    + "AND NOT EXISTS (SELECT newer.id FROM PaymentRefund newer "
+                    + "WHERE newer.storeOrder = pr.storeOrder AND newer.id > pr.id))")
+    Page<PaymentRefund> findActionRequired(
+            @Param("reconciliationStatus") RefundStatus reconciliationStatus,
+            @Param("pgRejectedStatus") RefundStatus pgRejectedStatus,
+            @Param("retryableStoreOrderStatus") StoreOrderStatus retryableStoreOrderStatus,
+            Pageable pageable);
+
+    @Query("SELECT pr.refundStatus, COUNT(pr), MIN(pr.updatedAt) FROM PaymentRefund pr WHERE pr.refundStatus IN :statuses GROUP BY pr.refundStatus")
+    List<Object[]> countByStatusGroup(@Param("statuses") Collection<RefundStatus> statuses);
 }

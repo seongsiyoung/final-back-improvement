@@ -20,6 +20,7 @@ import feign.RequestTemplate;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -48,10 +49,16 @@ class PaymentReconciliationServiceTest {
         return payment;
     }
 
+    private Payment reversalPendingPayment(Long id, String pgOrderId) {
+        Payment payment = pendingPayment(id, pgOrderId);
+        ReflectionTestUtils.setField(payment, "paymentStatus", PaymentStatus.REVERSAL_PENDING);
+        return payment;
+    }
+
     private TossConfirmResponse responseWithStatus(String status) {
-        TossConfirmResponse response = mock(TossConfirmResponse.class);
-        when(response.getStatus()).thenReturn(status);
-        when(response.getPaymentKey()).thenReturn("test-payment-key");
+        TossConfirmResponse response = new TossConfirmResponse();
+        ReflectionTestUtils.setField(response, "status", status);
+        ReflectionTestUtils.setField(response, "paymentKey", "test-payment-key");
         return response;
     }
 
@@ -94,6 +101,22 @@ class PaymentReconciliationServiceTest {
     }
 
     @Test
+    @DisplayName("보상 취소 대상인데 PG에 기록이 없으면 실패로 확정하지 않고 확인 필요로 남긴다")
+    void reconcile_reversalPendingAndPgHasNoRecord_marksReconciliationRequired() {
+        Payment payment = reversalPendingPayment(31L, "order-31");
+        Request request = Request.create(HttpMethod.GET, "/v1/payments/orders/order-31",
+                Collections.emptyMap(), null, StandardCharsets.UTF_8, new RequestTemplate());
+        when(tossPaymentsClient.getPaymentByOrderId("order-31"))
+                .thenThrow(new FeignException.NotFound("not found", request, null, null));
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(paymentConfirmCommandService).markConfirmReconciliationRequired(31L);
+        verify(paymentConfirmCommandService, never()).failReversalPending(any());
+        verify(paymentConfirmCommandService, never()).failPending(any());
+    }
+
+    @Test
     void reconcile_whenAlreadyProcessedByAnotherPath_doesNotPropagateException() {
         Payment payment = pendingPayment(4L, "order-4");
         TossConfirmResponse pg = responseWithStatus("DONE");
@@ -117,5 +140,49 @@ class PaymentReconciliationServiceTest {
 
         org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class,
                 () -> paymentReconciliationService.reconcile(payment));
+    }
+
+    @Test
+    void reconcile_reversalPendingAndCanceled_failsReversalPending() {
+        Payment payment = reversalPendingPayment(6L, "order-6");
+        when(tossPaymentsClient.getPaymentByOrderId("order-6")).thenReturn(responseWithStatus("CANCELED"));
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(paymentConfirmCommandService).failReversalPending(6L);
+        verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
+    }
+
+    @Test
+    void reconcile_reversalPendingAndDone_doesNotCompleteConfirm() {
+        Payment payment = reversalPendingPayment(7L, "order-7");
+        when(tossPaymentsClient.getPaymentByOrderId("order-7")).thenReturn(responseWithStatus("DONE"));
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
+        verify(paymentConfirmCommandService, never()).failReversalPending(any());
+    }
+
+    @Test
+    void reconcile_approvedIsNoOp() {
+        Payment payment = pendingPayment(8L, "order-8");
+        payment.markRefundRequested();
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(tossPaymentsClient, never()).getPaymentByOrderId(any());
+    }
+
+    @Test
+    void reconcile_queryFails_doesNotChangeState() {
+        Payment payment = pendingPayment(9L, "order-9");
+        when(tossPaymentsClient.getPaymentByOrderId("order-9"))
+                .thenThrow(new RuntimeException("timeout"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> paymentReconciliationService.reconcile(payment));
+        verify(paymentConfirmCommandService, never()).failPending(any());
+        verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
     }
 }
