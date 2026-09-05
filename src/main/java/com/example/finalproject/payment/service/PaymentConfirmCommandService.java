@@ -15,6 +15,8 @@ import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.dto.request.TossConfirmRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.PaymentResolutionOutcome;
+import com.example.finalproject.payment.event.PaymentResolvedEvent;
 import com.example.finalproject.payment.event.StoreOrderCreatedEvent;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
@@ -110,6 +112,7 @@ public class PaymentConfirmCommandService {
         );
 
         order.markPaid();
+        publishPaymentResolved(payment, PaymentResolutionOutcome.APPROVED);
 
         return new PostPaymentConfirmResponse(
                 order.getId(),
@@ -137,6 +140,7 @@ public class PaymentConfirmCommandService {
 
         if (payment.getPaymentStatus() == PaymentStatus.PENDING) {
             payment.fail();
+            publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
     }
 
@@ -146,6 +150,7 @@ public class PaymentConfirmCommandService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
         if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
             payment.fail();
+            publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
     }
 
@@ -229,6 +234,11 @@ public class PaymentConfirmCommandService {
         }
 
         return createdStoreOrders;
+    }
+
+    private void publishPaymentResolved(Payment payment, PaymentResolutionOutcome outcome) {
+        applicationEventPublisher.publishEvent(new PaymentResolvedEvent(
+                payment.getId(), payment.getOrder().getUser().getId(), outcome));
     }
 
 }

@@ -15,6 +15,8 @@ import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.client.TossPaymentsClient;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.PaymentResolutionOutcome;
+import com.example.finalproject.payment.event.PaymentResolvedEvent;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.RefundScenarioSeeder;
@@ -38,13 +40,17 @@ import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 
+@RecordApplicationEvents
 class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
 
     @Autowired private PaymentService paymentService;
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private RefundScenarioSeeder scenarioSeeder;
     @Autowired private CircuitBreakerFactory<?, ?> circuitBreakerFactory;
+    @Autowired private ApplicationEvents applicationEvents;
     @MockBean private TossPaymentsClient tossPaymentsClient;
 
     private final Request request = Request.create(HttpMethod.POST, "/v1/payments/confirm",
@@ -66,6 +72,10 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
         paymentService.confirm(scenario.email(), scenario.request());
 
         assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(paymentResolutionEvents(scenario))
+                .extracting(PaymentResolvedEvent::paymentId, PaymentResolvedEvent::outcome)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(
+                        scenario.paymentId(), PaymentResolutionOutcome.APPROVED));
         verify(tossPaymentsClient, times(1)).getPaymentByOrderId(pgOrderId(scenario));
     }
 
@@ -81,6 +91,10 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
                 () -> paymentService.confirm(scenario.email(), scenario.request()));
 
         assertThat(statusOf(scenario)).isEqualTo(PaymentStatus.FAILED);
+        assertThat(paymentResolutionEvents(scenario))
+                .extracting(PaymentResolvedEvent::paymentId, PaymentResolvedEvent::outcome)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(
+                        scenario.paymentId(), PaymentResolutionOutcome.FAILED));
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_REJECTED);
         assertThat(exception.getErrorCode().getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(exception.getCause()).isInstanceOf(RetryableException.class);
@@ -214,6 +228,13 @@ class PaymentConfirmOutcomeTest extends IntegrationTestSupport {
 
     private String pgOrderId(RefundScenarioSeeder.ConfirmScenario scenario) {
         return paymentRepository.findById(scenario.paymentId()).orElseThrow().getPgOrderId();
+    }
+
+    private java.util.List<PaymentResolvedEvent> paymentResolutionEvents(
+            RefundScenarioSeeder.ConfirmScenario scenario) {
+        return applicationEvents.stream(PaymentResolvedEvent.class)
+                .filter(event -> event.paymentId().equals(scenario.paymentId()))
+                .toList();
     }
 
     private RetryableException readTimeout() {

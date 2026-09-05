@@ -5,7 +5,9 @@ import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.domain.SubscriptionPayment;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.PaymentResolutionOutcome;
 import com.example.finalproject.payment.enums.ReconciliationOutcome;
+import com.example.finalproject.payment.event.PaymentResolvedEvent;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
@@ -13,6 +15,7 @@ import com.example.finalproject.subscription.domain.Subscription;
 import com.example.finalproject.subscription.enums.SubscriptionStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +27,7 @@ public class PaymentReconciliationCommandService {
     private final PaymentRepository paymentRepository;
     private final PaymentRefundRepository paymentRefundRepository;
     private final SubscriptionPaymentRepository subscriptionPaymentRepository;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional
     public void resolvePayment(Long paymentId, ReconciliationOutcome outcome, Integer confirmedAmount) {
@@ -38,6 +42,7 @@ public class PaymentReconciliationCommandService {
         }
         if (outcome == ReconciliationOutcome.NOT_CHARGED) {
             payment.fail();
+            publishPaymentFailed(payment);
             return;
         }
         if (outcome == ReconciliationOutcome.REFUNDED) {
@@ -45,6 +50,7 @@ public class PaymentReconciliationCommandService {
                 throw new BusinessException(ErrorCode.INVALID_REFUND_AMOUNT);
             }
             payment.resolveReconciliationAsRefunded(confirmedAmount);
+            publishPaymentFailed(payment);
             return;
         }
         throw new BusinessException(ErrorCode.INVALID_PAYMENT_CANCEL_STATUS);
@@ -69,5 +75,10 @@ public class PaymentReconciliationCommandService {
         }
         subscription.activate();
         subscription.resetFailCount();
+    }
+
+    private void publishPaymentFailed(Payment payment) {
+        applicationEventPublisher.publishEvent(new PaymentResolvedEvent(
+                payment.getId(), payment.getOrder().getUser().getId(), PaymentResolutionOutcome.FAILED));
     }
 }
