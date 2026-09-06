@@ -187,4 +187,19 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
         Payment succeededAfter = paymentRepository.findById(succeedingPayment.getId()).orElseThrow();
         assertThat(succeededAfter.getPaymentStatus()).isEqualTo(PaymentStatus.APPROVED);
     }
+
+    @Test
+    void reconcileStalePendingPayments_whenPgResultIsUnresolved_recordsAttemptWithoutChangingState() {
+        Payment payment = seedStuckPayment(1);
+        backdateUpdatedAt(payment.getId(), LocalDateTime.now().minusMinutes(10));
+        toss.stubGetPaymentByOrderIdStatus(payment.getPgOrderId(), "IN_PROGRESS");
+
+        scheduler.reconcileStalePayments();
+        entityManager.clear();
+
+        Payment after = paymentRepository.findById(payment.getId()).orElseThrow();
+        assertThat(after.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(after.getLastReconciledAt()).isNotNull();
+        assertThat(after.getReconcileAttempts()).isEqualTo(1);
+    }
 }

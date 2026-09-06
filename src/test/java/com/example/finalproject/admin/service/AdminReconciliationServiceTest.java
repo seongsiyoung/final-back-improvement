@@ -99,6 +99,26 @@ class AdminReconciliationServiceTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("반복 조회해도 결론이 없는 자동 복구 대기 건은 별도로 표시한다")
+    void autoRecovery_marksHighAttemptTargetsForAttention() {
+        var payment = subscriptionScenarioSeeder.stuckSubscriptionPayment(
+                newBuyerEmail(), PaymentStatus.PENDING, 10);
+        jdbcTemplate.update("update subscription_payments set reconcile_attempts = 12 where id = ?", payment.getId());
+
+        AdminAutoRecoveryWaitingResponse response = adminReconciliationService.getAutoRecoveryWaiting(
+                adminEmail(), PageRequest.of(0, 100));
+
+        assertThat(response.summary().attentionCount()).isGreaterThanOrEqualTo(1);
+        assertThat(response.subscriptionPayments().getContent())
+                .filteredOn(item -> item.id().equals(payment.getId()))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.reconcileAttempts()).isEqualTo(12);
+                    assertThat(item.requiresAttention()).isTrue();
+                });
+    }
+
+    @Test
     @DisplayName("StoreOrder가 만들어지지 않은 확인 필요 결제도 처리 필요 목록에 나온다")
     void actionRequired_listsPaymentWithoutStoreOrder() {
         var scenario = refundScenarioSeeder.readyPayment(newBuyerEmail());

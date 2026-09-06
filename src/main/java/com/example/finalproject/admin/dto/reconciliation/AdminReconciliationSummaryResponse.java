@@ -4,5 +4,5 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 public record AdminReconciliationSummaryResponse(long totalCount, LocalDateTime oldestUpdatedAt,
-                                                 Map<String, Long> byStatus) {
+                                                 long attentionCount, Map<String, Long> byStatus) {
 }

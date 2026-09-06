@@ -30,14 +30,16 @@ class PaymentReconciliationServiceTest {
 
     private TossPaymentsClient tossPaymentsClient;
     private PaymentConfirmCommandService paymentConfirmCommandService;
+    private ReconciliationAttemptCommandService reconciliationAttemptCommandService;
     private PaymentReconciliationService paymentReconciliationService;
 
     @BeforeEach
     void setUp() {
         tossPaymentsClient = mock(TossPaymentsClient.class);
         paymentConfirmCommandService = mock(PaymentConfirmCommandService.class);
+        reconciliationAttemptCommandService = mock(ReconciliationAttemptCommandService.class);
         paymentReconciliationService = new PaymentReconciliationService(
-                tossPaymentsClient, paymentConfirmCommandService);
+                tossPaymentsClient, paymentConfirmCommandService, reconciliationAttemptCommandService);
     }
 
     private Payment pendingPayment(Long id, String pgOrderId) {

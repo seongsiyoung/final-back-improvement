@@ -11,9 +11,16 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
 
 public interface SubscriptionPaymentRepository extends JpaRepository<SubscriptionPayment, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT sp FROM SubscriptionPayment sp WHERE sp.id = :subscriptionPaymentId")
+    java.util.Optional<SubscriptionPayment> findWithLockById(
+            @Param("subscriptionPaymentId") Long subscriptionPaymentId);
 
     boolean existsBySubscription_IdAndBillingCycleDateAndPaymentStatusIn(
             Long subscriptionId, LocalDate billingCycleDate, Collection<PaymentStatus> paymentStatuses);
@@ -24,13 +31,16 @@ public interface SubscriptionPaymentRepository extends JpaRepository<Subscriptio
     @Query("SELECT sp FROM SubscriptionPayment sp "
             + "WHERE sp.paymentStatus IN (:statuses) "
             + "AND sp.updatedAt < :threshold "
-            + "ORDER BY sp.updatedAt ASC")
+            + "ORDER BY sp.lastReconciledAt ASC NULLS FIRST")
     List<SubscriptionPayment> findReconciliationTargets(
             @Param("statuses") Collection<PaymentStatus> statuses,
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
 
     Page<SubscriptionPayment> findByPaymentStatusInOrderByUpdatedAtAsc(Collection<PaymentStatus> statuses, Pageable pageable);
+
+    long countByPaymentStatusInAndReconcileAttemptsGreaterThanEqual(
+            Collection<PaymentStatus> statuses, int reconcileAttempts);
 
     @EntityGraph(attributePaths = "subscription")
     @Query(value = "SELECT sp FROM SubscriptionPayment sp "

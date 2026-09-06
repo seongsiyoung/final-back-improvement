@@ -58,17 +58,20 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findByPgOrderId(String pgOrderId);
 
-    /** 재조정 대상. 오래된 것부터 상한만큼만 가져온다. */
+    /** 재조정 대상. 아직 조회하지 않은 것부터, 이후에는 가장 오래 전에 조회한 것부터 가져온다. */
     @Query("SELECT p FROM Payment p "
             + "WHERE p.paymentStatus IN (:statuses) "
             + "AND p.updatedAt < :threshold "
-            + "ORDER BY p.updatedAt ASC")
+            + "ORDER BY p.lastReconciledAt ASC NULLS FIRST")
     List<Payment> findReconciliationTargets(
             @Param("statuses") Collection<PaymentStatus> statuses,
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
 
     Page<Payment> findByPaymentStatusInOrderByUpdatedAtAsc(Collection<PaymentStatus> statuses, Pageable pageable);
+
+    long countByPaymentStatusInAndReconcileAttemptsGreaterThanEqual(
+            Collection<PaymentStatus> statuses, int reconcileAttempts);
 
     @EntityGraph(attributePaths = "order")
     @Query(value = "SELECT p FROM Payment p "

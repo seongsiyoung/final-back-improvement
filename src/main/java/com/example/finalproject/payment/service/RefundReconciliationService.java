@@ -23,6 +23,7 @@ public class RefundReconciliationService {
     private final PaymentCommandService paymentCommandService;
     private final RefundTargetFactory refundTargetFactory;
     private final PaymentRepository paymentRepository;
+    private final ReconciliationAttemptCommandService reconciliationAttemptCommandService;
 
     public void reconcile(PaymentRefund refund) {
         RefundStatus status = refund.getRefundStatus();
@@ -35,20 +36,29 @@ public class RefundReconciliationService {
         Payment payment = paymentRepository.findByOrder_Id(target.orderId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
-        if (status == RefundStatus.PG_APPROVED) {
-            retryLedger(target, localRefunded(payment) + target.amount());
-            return;
-        }
+        boolean lookupSucceeded = false;
+        boolean unresolved = false;
+        try {
+            if (status == RefundStatus.PG_APPROVED) {
+                retryLedger(target, localRefunded(payment) + target.amount());
+                return;
+            }
 
-        TossConfirmResponse pg = tossPaymentsClient.getPaymentByOrderId(payment.getPgOrderId());
-        int cumulative = pg.getCumulativeCanceledAmount();
-        if (cumulative > localRefunded(payment)) {
-            paymentCommandService.markPgApproved(target.storeOrderId());
-            retryLedger(target, cumulative);
-            return;
-        }
+            TossConfirmResponse pg = tossPaymentsClient.getPaymentByOrderId(payment.getPgOrderId());
+            lookupSucceeded = true;
+            int cumulative = pg.getCumulativeCanceledAmount();
+            if (cumulative > localRefunded(payment)) {
+                paymentCommandService.markPgApproved(target.storeOrderId());
+                retryLedger(target, cumulative);
+                return;
+            }
 
-        paymentCancelService.resumeCancel(target);
+            unresolved = true;
+            paymentCancelService.resumeCancel(target);
+        } finally {
+            reconciliationAttemptCommandService.recordRefundAttempt(
+                    refund.getId(), lookupSucceeded && unresolved);
+        }
     }
 
     private int localRefunded(Payment payment) {
