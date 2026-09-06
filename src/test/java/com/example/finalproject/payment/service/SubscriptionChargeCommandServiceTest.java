@@ -62,9 +62,9 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
         long countBefore = subscriptionPaymentRepository.count();
 
         assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.ALREADY_PROCESSED_PAYMENT));
+                .isInstanceOf(SubscriptionChargeBlockedException.class)
+                .satisfies(e -> assertThat(((SubscriptionChargeBlockedException) e)
+                        .getBlockingPaymentStatus()).isEqualTo(PaymentStatus.APPROVED));
 
         assertThat(subscriptionPaymentRepository.count()).isEqualTo(countBefore);
     }
@@ -98,9 +98,9 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
         long countBefore = subscriptionPaymentRepository.count();
 
         assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.ALREADY_PROCESSED_PAYMENT));
+                .isInstanceOf(SubscriptionChargeBlockedException.class)
+                .satisfies(e -> assertThat(((SubscriptionChargeBlockedException) e)
+                        .getBlockingPaymentStatus()).isEqualTo(PaymentStatus.PENDING));
 
         assertThat(subscriptionPaymentRepository.count()).isEqualTo(countBefore);
     }
@@ -127,7 +127,9 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
         subscriptionPaymentRepository.save(payment);
 
         assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
-                .isInstanceOf(BusinessException.class);
+                .isInstanceOf(SubscriptionChargeBlockedException.class)
+                .satisfies(e -> assertThat(((SubscriptionChargeBlockedException) e)
+                        .getBlockingPaymentStatus()).isEqualTo(PaymentStatus.REVERSAL_PENDING));
     }
 
     @Test
@@ -138,7 +140,9 @@ class SubscriptionChargeCommandServiceTest extends IntegrationTestSupport {
         subscriptionPaymentRepository.save(payment);
 
         assertThatThrownBy(() -> subscriptionChargeCommandService.startCharge(subscription.getId()))
-                .isInstanceOf(BusinessException.class);
+                .isInstanceOf(SubscriptionChargeBlockedException.class)
+                .satisfies(e -> assertThat(((SubscriptionChargeBlockedException) e)
+                        .getBlockingPaymentStatus()).isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED));
     }
 
     @Test

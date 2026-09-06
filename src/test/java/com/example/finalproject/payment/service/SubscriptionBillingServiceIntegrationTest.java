@@ -1,11 +1,16 @@
 package com.example.finalproject.payment.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 
 import com.example.finalproject.payment.domain.PaymentMethod;
 import com.example.finalproject.payment.domain.SubscriptionPayment;
 import com.example.finalproject.payment.enums.PaymentMethodType;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
 import com.example.finalproject.payment.repository.PaymentMethodRepository;
 import com.example.finalproject.payment.scheduler.SubscriptionRecurringProcessor;
 import com.example.finalproject.store.domain.Store;
@@ -14,6 +19,7 @@ import com.example.finalproject.subscription.domain.SubscriptionProduct;
 import com.example.finalproject.subscription.enums.SubscriptionStatus;
 import com.example.finalproject.subscription.repository.SubscriptionProductRepository;
 import com.example.finalproject.subscription.repository.SubscriptionRepository;
+import com.example.finalproject.subscription.service.SubscriptionScheduleGenerationService;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
 import com.example.finalproject.testsupport.TossStub;
@@ -24,6 +30,7 @@ import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -51,6 +58,10 @@ class SubscriptionBillingServiceIntegrationTest extends IntegrationTestSupport {
     private SubscriptionRepository subscriptionRepository;
     @Autowired
     private SubscriptionRecurringProcessor subscriptionRecurringProcessor;
+    @Autowired
+    private SubscriptionPaymentRepository subscriptionPaymentRepository;
+    @MockBean
+    private SubscriptionScheduleGenerationService scheduleGenerationService;
 
     private Subscription seedSubscription() {
         String email = "sub-" + System.nanoTime() + "@test.com";
@@ -118,5 +129,52 @@ class SubscriptionBillingServiceIntegrationTest extends IntegrationTestSupport {
         Subscription reloaded = subscriptionRepository.findById(subscription.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
         assertThat(reloaded.getNextPaymentDate()).isAfter(java.time.LocalDate.now());
+    }
+
+    @Test
+    void processSingleSubscription_afterPostProcessingFailure_advancesApprovedCycleOnNextRun() {
+        toss.stubApproveBillingSuccess("stub-payment-key-retry");
+        Subscription subscription = seedSubscription();
+        java.time.LocalDate billingCycleDate = subscription.getNextPaymentDate();
+        doThrow(new RuntimeException("배송 일정 생성 실패"))
+                .doNothing()
+                .when(scheduleGenerationService)
+                .generateSchedule(any(Subscription.class), eq(java.time.LocalDate.now()));
+
+        assertThatThrownBy(() -> subscriptionRecurringProcessor.processSingleSubscription(subscription.getId()))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(subscriptionPaymentRepository.findAll()).anySatisfy(payment ->
+                assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.APPROVED));
+
+        subscriptionRecurringProcessor.processSingleSubscription(subscription.getId());
+
+        Subscription reloaded = subscriptionRepository.findById(subscription.getId()).orElseThrow();
+        assertThat(reloaded.getNextPaymentDate()).isAfter(billingCycleDate);
+        assertThat(reloaded.getFailCount()).isZero();
+    }
+
+    @Test
+    void processSingleSubscription_whenReversalPendingRepeats_doesNotConsumeRetryBudget() {
+        Subscription subscription = seedSubscription();
+        SubscriptionPayment payment = subscriptionPaymentRepository.save(SubscriptionPayment.builder()
+                .subscription(subscription)
+                .paymentMethod(PaymentMethodType.CARD)
+                .amount(subscription.getTotalAmount())
+                .pgOrderId("SUB-REVERSAL-" + System.nanoTime())
+                .pgProvider("TOSS")
+                .paymentStatus(PaymentStatus.PENDING)
+                .billingCycleDate(subscription.getNextPaymentDate())
+                .build());
+        payment.markReversalPending();
+        subscriptionPaymentRepository.save(payment);
+
+        for (int i = 0; i < 3; i++) {
+            subscriptionRecurringProcessor.processSingleSubscription(subscription.getId());
+        }
+
+        Subscription reloaded = subscriptionRepository.findById(subscription.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(reloaded.getFailCount()).isZero();
     }
 }

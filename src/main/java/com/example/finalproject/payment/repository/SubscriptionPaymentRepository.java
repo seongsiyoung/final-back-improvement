@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -22,7 +23,7 @@ public interface SubscriptionPaymentRepository extends JpaRepository<Subscriptio
     java.util.Optional<SubscriptionPayment> findWithLockById(
             @Param("subscriptionPaymentId") Long subscriptionPaymentId);
 
-    boolean existsBySubscription_IdAndBillingCycleDateAndPaymentStatusIn(
+    Optional<SubscriptionPayment> findFirstBySubscription_IdAndBillingCycleDateAndPaymentStatusInOrderByIdDesc(
             Long subscriptionId, LocalDate billingCycleDate, Collection<PaymentStatus> paymentStatuses);
 
     boolean existsBySubscription_UserIdAndPaymentStatusIn(

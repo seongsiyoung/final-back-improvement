@@ -60,10 +60,12 @@ public class SubscriptionChargeCommandService {
         // 확정된 결정" 참고 — nextPaymentDate가 실패 시에는 전진하지 않아 DB
         // UNIQUE(subscription_id, billing_cycle_date)를 걸면 정상적인 재시도까지
         // 막아버린다.
-        if (subscriptionPaymentRepository.existsBySubscription_IdAndBillingCycleDateAndPaymentStatusIn(
-                subscriptionId, billingCycleDate, UNRESOLVED_STATUSES)) {
-            throw new BusinessException(ErrorCode.ALREADY_PROCESSED_PAYMENT);
-        }
+        subscriptionPaymentRepository
+                .findFirstBySubscription_IdAndBillingCycleDateAndPaymentStatusInOrderByIdDesc(
+                        subscriptionId, billingCycleDate, UNRESOLVED_STATUSES)
+                .ifPresent(payment -> {
+                    throw new SubscriptionChargeBlockedException(payment.getPaymentStatus());
+                });
 
         PaymentMethod paymentMethod = subscription.getPaymentMethod();
         String pgOrderId = makePgOrderId(subscription);
