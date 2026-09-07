@@ -13,12 +13,10 @@ import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
 import com.example.finalproject.payment.dto.request.PostPaymentPrepareRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentPrepareResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
-import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -32,7 +30,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
@@ -93,12 +90,11 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
         return confirmAttemptPoolSize() * 1000L / TARGET_AGGREGATE_RESUBMIT_RATE_PER_SEC;
     }
 
-    @RegisterExtension
-    static TossStub toss = new TossStub();
 
     @DynamicPropertySource
     static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
+        // base-url 은 IntegrationTestSupport 의 공유 스텁이 등록한다. 여기서 다시 등록하면
+        // 어느 쪽이 이기는지가 @DynamicPropertySource 수집 순서에 달리게 되어 위험하다.
         // 톰캣 스레드 수(server.tomcat.threads.max/min-spare)는 규모별로 값이 달라 여기서
         // 등록하지 않는다 — 각 하위 클래스가 자기 상수로 별도 @DynamicPropertySource를 갖는다.
         // tomcat.threads.busy 메트릭은 Tomcat MBean 등록이 켜져 있어야 노출된다(기본 꺼짐).
@@ -129,7 +125,10 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
     void setUpWorkerOccupancyTest() {
         String email = "cb-occupancy-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        seeder.seedStoreWithProducts(1, 1000);
+        // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
+        // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
+        // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
+        Store store = seeder.seedStoreWithProducts(1, 1000);
 
         LoginRequest loginRequest = new LoginRequest();
         ReflectionTestUtils.setField(loginRequest, "email", email);
@@ -139,7 +138,6 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
                 new org.springframework.core.ParameterizedTypeReference<>() {});
         accessToken = loginResponse.getBody().getData().getAccessToken();
 
-        Store store = productRepository.findAll().stream().map(Product::getStore).findFirst().orElseThrow();
         productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0).getId();
 

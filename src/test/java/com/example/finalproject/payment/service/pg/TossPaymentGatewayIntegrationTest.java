@@ -7,22 +7,10 @@ import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 
 import com.example.finalproject.testsupport.IntegrationTestSupport;
-import com.example.finalproject.testsupport.TossStub;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 class TossPaymentGatewayIntegrationTest extends IntegrationTestSupport {
-
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
 
     @Autowired
     private PaymentGateWay paymentGateWay;

@@ -9,12 +9,10 @@ import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
 import com.example.finalproject.payment.dto.request.PostPaymentPrepareRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentPrepareResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
-import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.domain.Pageable;
@@ -57,12 +54,8 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
     private static final int CONCURRENT_CONFIRMS = 15;
     private static final int TOMCAT_MAX_THREADS = 8;
 
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
     @DynamicPropertySource
     static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
         // 이 테스트에만 적용 — application-test.yml(전역)을 건드리면 다른 통합 테스트의
         // 톰캣 워커 수까지 줄어들어 영향 범위가 필요 이상으로 넓어진다.
         registry.add("server.tomcat.threads.max", () -> TOMCAT_MAX_THREADS);
@@ -87,9 +80,11 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
 
     @BeforeEach
     void setUp() {
-        seeder.seedStoreWithProducts(1, 1000);
+        // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
+        // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
+        // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
+        Store store = seeder.seedStoreWithProducts(1, 1000);
 
-        Store store = productRepository.findAll().stream().map(Product::getStore).findFirst().orElseThrow();
         productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0).getId();
     }

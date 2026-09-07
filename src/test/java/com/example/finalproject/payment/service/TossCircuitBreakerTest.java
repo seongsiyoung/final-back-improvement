@@ -11,12 +11,10 @@ import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
 import com.example.finalproject.payment.dto.request.PostPaymentPrepareRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentPrepareResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
-import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.util.Iterator;
@@ -24,7 +22,6 @@ import java.util.Map;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
@@ -34,8 +31,6 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -45,14 +40,6 @@ import org.springframework.test.util.ReflectionTestUtils;
  * (테스트 전용, 기본 10초 대신).
  */
 class TossCircuitBreakerTest extends IntegrationTestSupport {
-
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -65,11 +52,14 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
 
     private Long productId;
 
+
     @BeforeEach
     void setUp() {
-        seeder.seedStoreWithProducts(1, 100);
+        // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
+        // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
+        // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
+        Store store = seeder.seedStoreWithProducts(1, 100);
 
-        Store store = productRepository.findAll().stream().map(Product::getStore).findFirst().orElseThrow();
         productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0).getId();
     }

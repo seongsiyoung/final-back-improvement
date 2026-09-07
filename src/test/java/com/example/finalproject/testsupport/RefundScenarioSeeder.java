@@ -60,10 +60,10 @@ public class RefundScenarioSeeder {
     private ConfirmScenario confirmScenario(String buyerEmail, int stock) {
         Store store = loadTestDataSeeder.seedStoreWithProducts(1, stock);
         User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
-        Product product = productRepository.findAll().stream()
-                .filter(candidate -> candidate.getStore().getId().equals(store.getId()))
-                .findFirst()
-                .orElseThrow();
+        // findAll() 로 전부 올린 뒤 거르면 검색 인덱스 시더가 남긴 수천 건까지 영속성 컨텍스트에
+        // 들어온다. 스토어로 좁혀 조회한다.
+        Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
+                .getContent().stream().findFirst().orElseThrow();
         if (stock == 0) {
             ReflectionTestUtils.setField(product, "stock", 0);
             productRepository.save(product);

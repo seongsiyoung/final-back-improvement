@@ -18,18 +18,14 @@ import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import com.example.finalproject.user.domain.User;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -43,13 +39,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
+    private static final String OWNER_EMAIL = "recon-scheduler-owner@test.com";
 
     @Autowired
     private PendingPaymentReconciliationScheduler scheduler;
@@ -76,7 +66,11 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
     @BeforeEach
     void setUp() {
         user = seeder.seedUserWithAddress("scheduler-" + System.nanoTime() + "@test.com", "password1234!");
-        Store store = seeder.seedStoreWithProducts(1, 100);
+        // 기본 오너 이메일로 시드하면 같은 스키마를 쓰는 다른 클래스와 상품을 공유해 재고가 섞인다.
+        // 이 테스트는 재고 부족을 실패 조건으로 쓰므로 자기 스토어를 따로 둔다. 오너는 상수로
+        // 고정한다 — 매번 새로 만들면 users.phone 이 이메일 해시 기반이라 유니크 충돌 여지가 커진다.
+        Store store = seeder.seedStoreWithProducts(
+                OWNER_EMAIL, 1, 100);
         product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0);
     }

@@ -15,12 +15,10 @@ import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.domain.Pageable;
@@ -28,19 +26,9 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class PaymentConfirmTimeoutTest extends IntegrationTestSupport {
-
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -57,7 +45,10 @@ class PaymentConfirmTimeoutTest extends IntegrationTestSupport {
         toss.stubConfirmWithDelay(Duration.ofSeconds(2));
         String email = "timeout-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        seeder.seedStoreWithProducts(1, 100);
+        // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
+        // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
+        // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
+        Store store = seeder.seedStoreWithProducts(1, 100);
 
         LoginRequest loginRequest = new LoginRequest();
         ReflectionTestUtils.setField(loginRequest, "email", email);
@@ -67,7 +58,6 @@ class PaymentConfirmTimeoutTest extends IntegrationTestSupport {
                 new org.springframework.core.ParameterizedTypeReference<>() {});
         accessToken = loginResponse.getBody().getData().getAccessToken();
 
-        Store store = productRepository.findAll().stream().map(Product::getStore).findFirst().orElseThrow();
         Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0);
 

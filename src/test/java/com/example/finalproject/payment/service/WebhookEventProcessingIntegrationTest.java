@@ -20,13 +20,11 @@ import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import com.example.finalproject.user.domain.User;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.domain.Pageable;
@@ -34,8 +32,6 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 /**
  * 웹훅 수신부터 실제 결제 반영까지 이어지는 비동기 배선(WebhookEventListener의
@@ -45,14 +41,6 @@ import org.springframework.test.context.DynamicPropertySource;
  * "웹훅이 도착하면 비동기로 처리까지 이어지는가"만 확인한다.
  */
 class WebhookEventProcessingIntegrationTest extends IntegrationTestSupport {
-
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
 
     @Autowired
     private TestRestTemplate restTemplate;
