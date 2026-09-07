@@ -18,6 +18,8 @@ import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Gauge;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +29,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,6 +80,9 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
     private static final long TEST_DURATION_MS = 150_000;
     private static final long CATEGORIES_INTERVAL_MS = 150;
     private static final long POLL_INTERVAL_MS = 250;
+    // 폴러 요청 자신이 워커 하나를 쓰므로 0 이 되지는 않는다.
+    private static final double BASELINE_BUSY_THRESHOLD = 2.0;
+    private static final long BASELINE_TIMEOUT_MS = 30_000;
     // fail-fast(서킷 OPEN/HALF_OPEN 차단) 응답 뒤 다음 confirm을 재제출하기 전에 두는 페이싱 —
     // 이게 없으면 풀 크기만큼 초당 수백~수천 건씩 재제출을 반복해 톰캣 busy 지표가
     // "실제 워커 점유 시간"이 아니라 "요청 폭주"로 왜곡된다. 스레드 1개당 고정 간격(예: 200ms)으로
@@ -117,29 +124,64 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
     private ProductRepository productRepository;
     @Autowired
     protected CircuitBreakerFactory<?, ?> circuitBreakerFactory;
+    @Autowired
+    private MeterRegistry meterRegistry;
 
-    private String accessToken;
+    /**
+     * 사용자당 활성 결제는 하나뿐이다(PaymentService.replaceReadyPaymentOrBlockUnresolvedPayment).
+     * 한 사용자로 동시에 여러 결제를 열면 prepare 가 PAYMENT_IN_PROGRESS 로 막혀 목표 동시성에
+     * 도달하지 못한다 — 워커 점유를 재려는 이 테스트의 전제가 무너진다. 그래서 시도마다 다른
+     * 사용자를 쓴다.
+     *
+     * <p>토큰은 재사용할 수 있는 경우와 아닌 경우가 갈린다. 회로가 OPEN 이라 fail-fast 로 끝난
+     * 시도는 NOT_SENT 로 분류되어 failPending() 이 결제를 FAILED 로 닫으므로 그 사용자는 다시
+     * 쓸 수 있다. 반대로 read-timeout(60초)까지 간 시도는 RESULT_UNKNOWN 이라 결제가 PENDING 으로
+     * 남고, 그 사용자는 테스트가 끝날 때까지 막힌다. 그래서 fail-fast 일 때만 반납한다.
+     *
+     * <p>풀 크기는 60초짜리 시도 횟수를 덮을 만큼이면 된다 —
+     * 동시성 × (테스트 길이 / read-timeout) + HALF_OPEN 프로브 + 여유.
+     */
+    private final BlockingQueue<String> availableTokens = new LinkedBlockingQueue<>();
+
+    /**
+     * 측정 시작 전에 미리 만들어 둔 결제. confirm 이 워커를 60초씩 붙잡으면 남은 슬롯의 prepare 가
+     * 커넥터 큐에서 대기해, 목표 동시성에 도달하기 전에 워커 수(8)에서 막힌다. 첫 버스트만이라도
+     * 순수 confirm 으로 시작할 수 있도록 슬롯 수만큼 결제를 앞당겨 만든다.
+     */
+    private final BlockingQueue<PreparedPayment> preparedPayments = new LinkedBlockingQueue<>();
+
+    /** confirm 동시 건수의 최고수위. 폴링 샘플이 아니라 증가 시점에 직접 기록한다. */
+    private final AtomicInteger maxConfirmInFlight = new AtomicInteger();
+
+    record PreparedPayment(String accessToken, Long paymentId) {}
     private Long productId;
+
+    protected int customerPoolSize() {
+        return confirmAttemptPoolSize() * 3 + 10;
+    }
 
     @BeforeEach
     void setUpWorkerOccupancyTest() {
-        String email = "cb-occupancy-" + System.nanoTime() + "@test.com";
-        seeder.seedUserWithAddress(email, "password1234!");
         // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
         // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
         // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
         Store store = seeder.seedStoreWithProducts(1, 1000);
 
-        LoginRequest loginRequest = new LoginRequest();
-        ReflectionTestUtils.setField(loginRequest, "email", email);
-        ReflectionTestUtils.setField(loginRequest, "password", "password1234!");
-        ResponseEntity<ApiResponse<LoginResponse>> loginResponse = restTemplate.exchange(
-                "/api/auth/login", HttpMethod.POST, new HttpEntity<>(loginRequest),
-                new org.springframework.core.ParameterizedTypeReference<>() {});
-        accessToken = loginResponse.getBody().getData().getAccessToken();
+        // 사용자 생성은 BCrypt 해싱과 로그인 왕복을 포함해 느리다. 측정 구간 안에서 하면 그 비용이
+        // 부하 생성기의 처리량을 깎아 워커 점유 측정을 왜곡한다. 전부 여기서 미리 만든다.
+        availableTokens.clear();
+        for (int i = 0; i < customerPoolSize(); i++) {
+            availableTokens.add(createCustomerToken("cb-occupancy-" + System.nanoTime() + "-" + i + "@test.com"));
+        }
 
         productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0).getId();
+
+        preparedPayments.clear();
+        for (int i = 0; i < confirmAttemptPoolSize(); i++) {
+            String token = availableTokens.poll();
+            preparedPayments.add(new PreparedPayment(token, prepareNewPayment(token)));
+        }
 
         toss.server.stubFor(post(urlPathMatching("/v1/payments/confirm"))
                 .willReturn(aResponse()
@@ -174,11 +216,37 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
     record StateTransitionEvent(long elapsedMs, CircuitBreaker.State from, CircuitBreaker.State to) {}
 
     /**
+     * 셋업(사용자 수백 명 생성·로그인)이 남긴 워커·커넥션 사용이 가라앉을 때까지 기다린다.
+     * 이걸 하지 않으면 측정 시작 시점의 {@code tomcat.threads.busy} 가 이미 올라가 있어,
+     * 뒤이어 재는 워커 점유가 부하 때문인지 셋업 잔여 때문인지 구분되지 않는다.
+     */
+    private void awaitIdleBaseline(String label) {
+        double busy = Double.NaN;
+        long deadline = System.currentTimeMillis() + BASELINE_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            busy = readGaugeOrNan("tomcat.threads.busy");
+            // 폴러 자신의 요청 하나는 항상 busy 로 잡힌다.
+            if (!Double.isNaN(busy) && busy <= BASELINE_BUSY_THRESHOLD) {
+                break;
+            }
+            sleepQuietly(POLL_INTERVAL_MS);
+        }
+        double connections = readGaugeOrNan("hikaricp.connections.active");
+        System.out.printf("[%s] 측정 시작 baseline — tomcat.threads.busy=%.1f, hikaricp.connections.active=%.1f%n",
+                label, busy, connections);
+        assertThat(busy)
+                .describedAs("[%s] 셋업 잔여 부하가 가라앉은 뒤 측정을 시작해야 한다", label)
+                .isLessThanOrEqualTo(BASELINE_BUSY_THRESHOLD);
+    }
+
+    /**
      * 부하를 걸고 계측한 뒤 콘솔에 CLOSED-초기/OPEN/HALF_OPEN 구간별 정리표를 출력한다.
      * 서킷브레이커 적용 여부와 무관하게 완전히 같은 요청 패턴으로 실행된다 — 두 조건을
      * 갈라야 하는 유일한 지점은 어떤 {@link CircuitBreakerFactory} 빈이 주입됐는지뿐이다.
      */
     protected void runLoadAndPrintReport(String label) throws Exception {
+        awaitIdleBaseline(label);
+
         long testStart = System.currentTimeMillis();
         List<StateTransitionEvent> transitions = new CopyOnWriteArrayList<>();
 
@@ -189,6 +257,7 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
             registerStateTransitionListenerAfterFirstRun(real, transitions, testStart);
         }
 
+        maxConfirmInFlight.set(0);
         List<ConfirmAttemptResult> confirmResults = new CopyOnWriteArrayList<>();
         List<OccupancySample> occupancySamples = new CopyOnWriteArrayList<>();
         List<CategoriesSample> categoriesSamples = new CopyOnWriteArrayList<>();
@@ -266,9 +335,7 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
         // 이게 없으면 톰캣 busy가 낮게 나온 원인이 "서킷브레이커 효과"인지 "클라이언트가 애초에
         // 충분한 동시 요청을 못 만들어냈다"인지 구분할 수 없다 — 동시성 규모가 커질수록
         // (200-worker 조건) 클라이언트/DB 커넥션 풀이 먼저 병목될 위험이 커지므로 특히 중요하다.
-        int maxInFlightObserved = occupancySamples.stream()
-                .mapToInt(OccupancySample::confirmInFlight)
-                .max().orElse(0);
+        int maxInFlightObserved = maxConfirmInFlight.get();
         // 절대값(-5) 대신 비율(90%)로 잡는다 — 풀 크기가 커질수록(8 -> 230) 매 순간 몇 개가
         // prepare()/재제출 사이 전환 중이라 항상 약간의 미세한 미달이 자연스럽게 생긴다.
         int minAcceptableInFlight = (int) Math.ceil(confirmAttemptPoolSize() * 0.9);
@@ -313,13 +380,27 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
             if (!keepRunning.get()) {
                 return;
             }
+            // 미리 만들어 둔 결제가 있으면 그것부터 쓴다 — 첫 버스트가 prepare 없이 시작해야
+            // 워커가 막히기 전에 목표 동시성에 도달한다.
+            PreparedPayment prepared = preparedPayments.poll();
+            String accessToken = prepared != null ? prepared.accessToken() : availableTokens.poll();
+            if (accessToken == null) {
+                // 풀이 마르는 것 자체가 측정 실패 신호이므로 조용히 반복하지 않고 결과에 남긴다.
+                results.add(new ConfirmAttemptResult(
+                        System.currentTimeMillis() - testStart, 0, true, "NO_CUSTOMER_AVAILABLE"));
+                sleepQuietly(resubmitPacingMs());
+                submitNextConfirmAttempt(pool, keepRunning, results, confirmInFlight, testStart);
+                return;
+            }
+
             long start = System.currentTimeMillis();
             String outcome;
             try {
-                Long paymentId = prepareNewPayment();
-                confirmInFlight.incrementAndGet();
+                Long paymentId = prepared != null ? prepared.paymentId() : prepareNewPayment(accessToken);
+                // 250ms 폴링으로는 버스트 정점을 놓친다 — 증가하는 순간 최고수위를 직접 기록한다.
+                maxConfirmInFlight.accumulateAndGet(confirmInFlight.incrementAndGet(), Math::max);
                 try {
-                    callConfirm(paymentId);
+                    callConfirm(accessToken, paymentId);
                 } finally {
                     confirmInFlight.decrementAndGet();
                 }
@@ -329,6 +410,13 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
             }
             long duration = System.currentTimeMillis() - start;
             boolean failFast = duration < 500;
+
+            // fail-fast 는 회로가 OPEN 이라 NOT_SENT 로 분류된 경우다. failPending() 이 결제를
+            // FAILED 로 닫았으므로 이 사용자는 다시 쓸 수 있다. read-timeout 까지 간 시도는
+            // RESULT_UNKNOWN 이라 결제가 PENDING 으로 남아 그 사용자가 계속 막히므로 반납하지 않는다.
+            if (failFast) {
+                availableTokens.offer(accessToken);
+            }
             results.add(new ConfirmAttemptResult(
                     start - testStart, duration, failFast, outcome));
             if (failFast) {
@@ -344,7 +432,18 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
         });
     }
 
-    private Long prepareNewPayment() {
+    private String createCustomerToken(String email) {
+        seeder.seedUserWithAddress(email, "password1234!");
+        LoginRequest loginRequest = new LoginRequest();
+        ReflectionTestUtils.setField(loginRequest, "email", email);
+        ReflectionTestUtils.setField(loginRequest, "password", "password1234!");
+        ResponseEntity<ApiResponse<LoginResponse>> loginResponse = restTemplate.exchange(
+                "/api/auth/login", HttpMethod.POST, new HttpEntity<>(loginRequest),
+                new org.springframework.core.ParameterizedTypeReference<>() {});
+        return loginResponse.getBody().getData().getAccessToken();
+    }
+
+    private Long prepareNewPayment(String accessToken) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         PostPaymentPrepareRequest prepareRequest = new PostPaymentPrepareRequest();
@@ -357,7 +456,7 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
         return prepareResponse.getBody().getData().getPaymentId();
     }
 
-    private void callConfirm(Long paymentId) {
+    private void callConfirm(String accessToken, Long paymentId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         PostPaymentConfirmRequest confirmRequest = new PostPaymentConfirmRequest();
@@ -368,17 +467,15 @@ abstract class AbstractTossCircuitBreakerWorkerOccupancyTest extends Integration
                 new HttpEntity<>(confirmRequest, headers), String.class);
     }
 
+    /**
+     * 메트릭을 HTTP(/actuator)로 읽으면 안 된다. 이 테스트가 재려는 것이 톰캣 워커 점유인데,
+     * 점유가 100%가 되는 순간 관측 요청 자체가 커넥터 큐에서 빠져나오지 못해 NaN 이 된다.
+     * 재현이 성공할수록 계측이 죽는 구조다. MeterRegistry 를 직접 읽어 워커를 쓰지 않는다.
+     */
     private double readGaugeOrNan(String metricName) {
         try {
-            // /actuator/**도 test 프로파일 SecurityConfig 기준 anyRequest().authenticated()라
-            // 인증 헤더 없이는 401만 받는다(그래서 처음엔 계속 NaN이었다) — 로그인해둔
-            // accessToken을 그대로 실어 보낸다.
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(accessToken);
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    "/actuator/metrics/" + metricName, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
-            List<Map<String, Object>> measurements = (List<Map<String, Object>>) response.getBody().get("measurements");
-            return ((Number) measurements.get(0).get("value")).doubleValue();
+            Gauge gauge = meterRegistry.find(metricName).gauge();
+            return gauge != null ? gauge.value() : Double.NaN;
         } catch (Exception e) {
             return Double.NaN;
         }
