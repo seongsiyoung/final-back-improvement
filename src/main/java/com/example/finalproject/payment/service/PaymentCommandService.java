@@ -126,17 +126,19 @@ public class PaymentCommandService {
     public void markRefundReconciliationRequired(RefundTarget target) {
         Payment payment = findPaymentWithLock(target.orderId());
 
-        // 다른 경로가 먼저 환불을 확정했다면 그 결제는 정상 종결이다.
-        // 덮어쓰면 성공한 환불이 장애로 보이고, markRefundRequested 가
-        // RECONCILIATION_REQUIRED 를 거부해 이후 환불까지 막힌다.
+        // Payment 는 주문 단위라 다른 매장의 환불이 끝나기만 해도 REFUNDED/PARTIAL_REFUNDED 가 된다.
+        // 그 상태를 덮어쓰면 성공한 환불이 장애로 보이고, markRefundRequested 가
+        // RECONCILIATION_REQUIRED 를 거부해 이후 환불까지 막힌다. 그래서 결제만 건너뛴다.
         if (payment.getPaymentStatus() == PaymentStatus.REFUNDED
                 || payment.getPaymentStatus() == PaymentStatus.PARTIAL_REFUNDED) {
             log.warn("[REFUND_RECONCILE_SKIPPED_ALREADY_REFUNDED] orderId={}, storeOrderId={}, status={}",
                     target.orderId(), target.storeOrderId(), payment.getPaymentStatus());
-            return;
+        } else {
+            payment.markReconciliationRequired();
         }
 
-        payment.markReconciliationRequired();
+        // 환불 행은 매장 단위라 다른 매장과 공유되지 않는다. 결제를 건너뛴 경우에도 표시해야
+        // 관리자 목록에 뜨고, 재조정 스캔 대상(PG_PENDING·PG_APPROVED)에서 빠져 재시도가 멈춘다.
         paymentRefundRepository.findActiveByStoreOrderId(target.storeOrderId())
                 .ifPresent(PaymentRefund::markReconciliationRequired);
     }

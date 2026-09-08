@@ -283,6 +283,29 @@ public class RefundScenarioSeeder {
     }
 
     /** 장부 규칙 위반을 만든다. 결제는 REFUND_REQUESTED 인데 이미 전액 환불된 것으로 기록돼 있다. */
+    /** 이미 만들어진 매장 주문에 미확정 환불 행을 붙인다. 다중 매장 시나리오용. */
+    public void stuckRefundOn(RefundTarget target, RefundStatus status) {
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+        PaymentRefund refund = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrderRepository.findById(target.storeOrderId()).orElseThrow())
+                .refundAmount(target.amount())
+                .refundReason(target.reason())
+                .refundStatus(RefundStatus.PG_PENDING)
+                .build();
+        if (status == RefundStatus.PG_APPROVED) {
+            refund.markPgApproved();
+        }
+        paymentRefundRepository.save(refund);
+    }
+
+    /** 다른 매장 환불만 끝나 결제가 부분 환불로 남은 상태. */
+    public void forcePartiallyRefundedPayment(Long orderId) {
+        Payment payment = paymentRepository.findByOrder_Id(orderId).orElseThrow();
+        jdbcTemplate.update("update payments set payment_status = ?, refunded_amount = ? where id = ?",
+                PaymentStatus.PARTIAL_REFUNDED.name(), payment.getAmount() / 2, payment.getId());
+    }
+
     public void forceFullyRefundedAmount(RefundTarget target) {
         Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
         jdbcTemplate.update("update payments set refunded_amount = ? where id = ?",
