@@ -21,6 +21,7 @@ import com.example.finalproject.user.repository.RoleRepository;
 import com.example.finalproject.user.repository.UserRepository;
 import com.example.finalproject.user.repository.UserRoleRepository;
 import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -79,6 +80,12 @@ public class LoadTestDataSeeder {
         return user;
     }
 
+    /**
+     * 오너 전화번호는 User.phone 의 UNIQUE 제약을 받는다. 이메일 해시에서 뽑으면 값 공간이
+     * 1만 개뿐이라 오너가 수십 명만 돼도 생일 문제로 충돌한다. 순번은 겹칠 수가 없다.
+     */
+    private static final AtomicInteger OWNER_PHONE_SEQUENCE = new AtomicInteger();
+
     public Store seedStoreWithProducts(int productCount, int stockPerProduct) {
         return seedStoreWithProducts("load-test-store-owner@test.com", productCount, stockPerProduct);
     }
@@ -100,7 +107,7 @@ public class LoadTestDataSeeder {
                         .email(ownerEmail)
                         .password(passwordEncoder.encode("owner1234!"))
                         .name("부하테스트오너")
-                        .phone("0109999" + String.format("%04d", Math.abs(ownerEmail.hashCode() % 10000)))
+                        .phone("0109" + String.format("%07d", OWNER_PHONE_SEQUENCE.incrementAndGet()))
                         .termsAgreed(true)
                         .privacyAgreed(true)
                         .termsAgreedAt(LocalDateTime.now())

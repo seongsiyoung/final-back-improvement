@@ -80,8 +80,23 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
      * PaymentConfirmCommandService의 어떤 보상 로직도 거치지 않고 저장소에 PENDING 결제를
      * 주문 라인(OrderLine)까지 갖춘 채로 직접 심는다. quantity가 completeConfirm()의 재고
      * 차감·StoreOrder 생성 로직을 실제로 태우는 데 필요하다.
+     *
+     * <p>선점도 함께 만든다. 실제 PENDING 결제는 전부 prepare()를 거쳐 오므로 그 수량이
+     * 이미 잡혀 있고, completeConfirm()은 그 선점을 확정하는 것이기 때문이다.
      */
     private Payment seedStuckPayment(int quantity) {
+        return seedStuckPayment(quantity, product.getId(), true);
+    }
+
+    /**
+     * 존재하지 않는 상품을 가리키는 주문 라인을 심는다. completeConfirm()이 상품을 찾지 못해
+     * 실패하므로, 같은 배치의 다른 결제와 상태를 공유하지 않는 실패 장치가 된다.
+     */
+    private Payment seedStuckPaymentWithUnknownProduct() {
+        return seedStuckPayment(1, Long.MAX_VALUE, false);
+    }
+
+    private Payment seedStuckPayment(int quantity, Long lineProductId, boolean reserveStock) {
         Order order = orderRepository.save(Order.builder()
                 .orderNumber("ORD-STUCK-" + System.nanoTime())
                 .user(user)
@@ -95,12 +110,18 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
         orderLineRepository.save(OrderLine.builder()
                 .order(order)
-                .productId(product.getId())
+                .productId(lineProductId)
                 .storeId(product.getStore().getId())
                 .priceSnapshot(product.getEffectivePrice())
                 .productNameSnapshot(product.getProductName())
                 .quantity(quantity)
                 .build());
+
+        if (reserveStock) {
+            Product reservedProduct = productRepository.findById(product.getId()).orElseThrow();
+            reservedProduct.reserve(quantity);
+            productRepository.save(reservedProduct);
+        }
 
         return paymentRepository.save(Payment.builder()
                 .order(order)
@@ -162,8 +183,8 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
     @Test
     void reconcileStalePendingPayments_whenOnePaymentFails_stillProcessesTheOthers() {
-        // A: 재고보다 훨씬 많은 수량을 주문해 completeConfirm() 안에서 INSUFFICIENT_STOCK으로 실패한다.
-        Payment failingPayment = seedStuckPayment(product.getStock() + 1000);
+        // A: 주문 라인이 없는 상품을 가리켜 completeConfirm() 안에서 실패한다.
+        Payment failingPayment = seedStuckPaymentWithUnknownProduct();
         // B: 정상적으로 완결되어야 한다.
         Payment succeedingPayment = seedStuckPayment(1);
         backdateUpdatedAt(failingPayment.getId(), LocalDateTime.now().minusMinutes(10));

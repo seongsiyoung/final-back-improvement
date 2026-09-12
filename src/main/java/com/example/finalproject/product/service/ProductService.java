@@ -222,9 +222,19 @@ public class ProductService {
         User user = findUserByUserName(userName);
         Store store = findStoreByUser(user);
 
-        Product product = findActiveProduct(productId);
+        // 선점이 걸린 수량은 이미 팔린 것과 같다. 락 없이 stock 만 보고 빼면 stock 이 reserved
+        // 아래로 내려가고, 그 선점이 승인으로 확정될 때 stock 이 음수가 된다.
+        Product product = productRepository.findByIdForUpdate(productId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+        if (product.isDeleted()) {
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
 
         validateProductOwner(store, product);
+
+        if (product.getAvailableStock() < request.getQuantity()) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+        }
 
         product.decreaseStock(request.getQuantity());
 

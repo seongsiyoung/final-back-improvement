@@ -62,6 +62,11 @@ public class Product extends BaseTimeEntity {
     @Column(nullable = false)
     private Integer stock = 0;
 
+    // 결제가 진행 중이라 잡혀 있는 수량. stock 은 승인이 끝나야 줄어들고, 그 전까지는
+    // 이 값만 늘어난다. 가용재고는 stock - reserved 이며 컬럼으로 두지 않는다.
+    @Column(nullable = false, columnDefinition = "integer not null default 0")
+    private Integer reserved = 0;
+
     @Column(length = 100)
     private String origin;
 
@@ -104,6 +109,7 @@ public class Product extends BaseTimeEntity {
         this.discountRate = discountRate;
         this.salePrice = calculateSalePrice(price, discountRate);
         this.stock = stock != null ? stock : 0;
+        this.reserved = 0;
         this.origin = origin;
         this.productImageUrl = productImageUrl;
     }
@@ -190,6 +196,50 @@ public class Product extends BaseTimeEntity {
             this.isActive = false;
         }
 
+    }
+
+    /** 가용재고. 이미 선점된 수량은 다른 결제가 쓸 수 없다. */
+    public int getAvailableStock() {
+        return this.stock - this.reserved;
+    }
+
+    /** 결제 준비 단계의 선점. stock 은 건드리지 않는다. */
+    public void reserve(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        if (getAvailableStock() < quantity) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+        }
+        this.reserved += quantity;
+    }
+
+    /** 결제가 종결돼 더 쓰지 않는 선점을 되돌린다. stock 은 건드리지 않는다. */
+    public void releaseReservation(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        if (this.reserved < quantity) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        this.reserved -= quantity;
+    }
+
+    /** 승인이 끝난 선점을 실재고 차감으로 확정한다. 선점할 때 이미 확보했으므로 재고를 다시 검사하지 않는다. */
+    public void confirmReservation(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        if (this.reserved < quantity) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        this.reserved -= quantity;
+        this.stock -= quantity;
+
+        //판매 중지 상태로 전환
+        if (this.stock == 0) {
+            this.isActive = false;
+        }
     }
 
     private void validateProductName(String productName) {

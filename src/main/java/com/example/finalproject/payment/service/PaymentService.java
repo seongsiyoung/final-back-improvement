@@ -26,12 +26,15 @@ import com.example.finalproject.payment.service.pg.PgCallOutcome;
 import com.example.finalproject.payment.service.pg.PgFailureClassifier;
 import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
+import com.example.finalproject.product.service.StockReservationService;
 import com.example.finalproject.user.domain.Address;
 import com.example.finalproject.user.domain.User;
 import feign.FeignException;
 import java.time.LocalDateTime;
 import java.util.EnumSet;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -68,6 +71,7 @@ public class PaymentService {
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentConfirmCommandService paymentConfirmCommandService;
     private final CircuitBreakerFactory<?, ?> circuitBreakerFactory;
+    private final StockReservationService stockReservationService;
 
 
     @Transactional
@@ -77,11 +81,18 @@ public class PaymentService {
 
         User user = userLoader.loadUserByUsernameWithLock(email);
 
-        replaceReadyPaymentOrBlockUnresolvedPayment(user.getId());
+        List<Payment> replaceable = loadReplaceablePaymentsOrBlock(user.getId());
 
         validateRequest(request);
 
-        List<Product> products = loadAndValidateProducts(request);
+        lockCheckoutProducts(replaceable, request);
+
+        replaceable.forEach(payment -> {
+            payment.fail();
+            stockReservationService.releaseFor(payment.getOrder().getId());
+        });
+
+        List<Product> products = lockValidateAndReserveProducts(request);
 
         Order order = createOrder(user, request, products);
 
@@ -98,7 +109,8 @@ public class PaymentService {
         );
     }
 
-    private void replaceReadyPaymentOrBlockUnresolvedPayment(Long userId) {
+    /** 대체 가능한 옛 READY 결제를 돌려준다. 미확정 결제가 하나라도 있으면 진행을 막는다. */
+    private List<Payment> loadReplaceablePaymentsOrBlock(Long userId) {
         List<Payment> activePayments = paymentRepository.findByOrder_UserIdAndPaymentStatusIn(
                 userId, ACTIVE_PAYMENT_STATUSES);
 
@@ -107,7 +119,28 @@ public class PaymentService {
             throw new BusinessException(ErrorCode.PAYMENT_IN_PROGRESS);
         }
 
-        activePayments.forEach(Payment::fail);
+        return activePayments;
+    }
+
+    /**
+     * 이번 요청이 건드릴 상품을 **한 번에 productId 오름차순으로** 잠근다.
+     *
+     * <p>옛 READY 건의 반납과 새 요청의 선점을 따로 잠그면 각 구간만 정렬되고 전체로는
+     * 정렬되지 않는다. 두 사용자의 옛 주문과 새 요청이 서로 엇갈리면 그대로 데드락이 된다.
+     * 반납과 선점이 쓰는 상품을 합쳐 먼저 전부 잠그면 이후 순서는 문제가 되지 않는다.
+     */
+    private void lockCheckoutProducts(List<Payment> replaceable, PostPaymentPrepareRequest request) {
+        Set<Long> productIds = new TreeSet<>(request.getProductQuantities().keySet());
+
+        for (Payment payment : replaceable) {
+            orderLineRepository.findAllByOrderId(payment.getOrder().getId())
+                    .forEach(line -> productIds.add(line.getProductId()));
+        }
+
+        for (Long productId : productIds) {
+            productRepository.findByIdForUpdate(productId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+        }
     }
 
     public PostPaymentConfirmResponse confirm(
@@ -236,19 +269,25 @@ public class PaymentService {
         }
     }
 
-    private List<Product> loadAndValidateProducts(PostPaymentPrepareRequest request) {
+    /**
+     * 상품을 잠그고 검증한 뒤 결제가 끝날 때까지 쓸 수량을 선점한다.
+     *
+     * <p>가용재고 검사와 선점이 같은 락 안에 있어야 두 요청이 같은 재고를 나눠 갖지 않는다.
+     * 잠그는 순서를 productId 오름차순으로 고정하는 것은, 장바구니 구성이 서로 반대인 두
+     * 요청이 상대의 락을 마주 기다리는 데드락을 막기 위해서다.
+     */
+    private List<Product> lockValidateAndReserveProducts(PostPaymentPrepareRequest request) {
 
         Map<Long, Integer> quantities = request.getProductQuantities();
 
-        List<Product> products = productRepository.findAllById(quantities.keySet());
+        List<Product> products = new ArrayList<>();
 
-        if (products.size() != quantities.size()) {
-            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
-        }
+        for (Long productId : quantities.keySet().stream().sorted().toList()) {
 
-        for (Product product : products) {
+            Product product = productRepository.findByIdForUpdate(productId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
 
-            int qty = quantities.get(product.getId());
+            int qty = quantities.get(productId);
 
             // 삭제 여부
             if (product.isDeleted()) {
@@ -260,16 +299,17 @@ public class PaymentService {
                 throw new BusinessException(ErrorCode.PRODUCT_NOT_AVAILABLE);
             }
 
-            // 재고 충분
-            if (product.getStock() < qty) {
-                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
-            }
-
             // 가격 검증
             int price = product.getEffectivePrice();
             if (price <= 0) {
                 throw new BusinessException(ErrorCode.INVALID_PRICE);
             }
+
+            // 가용재고를 확인하고 같은 락 안에서 선점한다. 재고 부족이면 여기서 끝나므로
+            // 승인이 끝난 뒤 재고가 모자라 주문이 실패하는 경로가 생기지 않는다.
+            product.reserve(qty);
+
+            products.add(product);
         }
 
         return products;

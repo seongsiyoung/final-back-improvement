@@ -22,10 +22,12 @@ import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
+import com.example.finalproject.product.service.StockReservationService;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.store.repository.StoreRepository;
 import com.example.finalproject.user.domain.User;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -43,6 +45,7 @@ public class PaymentConfirmCommandService {
     private final PaymentRepository paymentRepository;
     private final OrderLineRepository orderLineRepository;
     private final ProductRepository productRepository;
+    private final StockReservationService stockReservationService;
     private final DeliveryFeeService deliveryFeeService;
     private final StoreOrderRepository storeOrderRepository;
     private final StoreRepository storeRepository;
@@ -83,15 +86,18 @@ public class PaymentConfirmCommandService {
         Order order = payment.getOrder();
         List<OrderLine> lines = orderLineRepository.findAllByOrderId(order.getId());
 
+        // 잠그는 순서는 prepare() 의 선점, releaseFor() 의 반납과 같은 productId 오름차순이다.
+        // findAllByOrderId 에는 ORDER BY 가 없어 DB 반환 순서를 믿을 수 없다.
+        lines = lines.stream().sorted(Comparator.comparing(OrderLine::getProductId)).toList();
+
+        // prepare() 가 이미 선점해 둔 수량을 실재고 차감으로 확정한다. 가용재고 확인은
+        // 선점 시점에 끝났으므로 여기서 다시 검사하지 않는다 — 돈이 나간 뒤 재고 부족으로
+        // 주문이 실패하는 경로를 만들지 않으려는 것이다.
         for (OrderLine line : lines) {
             Product product = productRepository.findByIdForUpdate(line.getProductId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
 
-            if (product.getStock() < line.getQuantity()) {
-                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
-            }
-
-            product.decreaseStock(line.getQuantity());
+            product.confirmReservation(line.getQuantity());
         }
 
         List<StoreOrder> storeOrders = createStoreOrdersAndOrderProducts(order, lines);
@@ -140,6 +146,7 @@ public class PaymentConfirmCommandService {
 
         if (payment.getPaymentStatus() == PaymentStatus.PENDING) {
             payment.fail();
+            stockReservationService.releaseFor(payment.getOrder().getId());
             publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
     }
@@ -150,6 +157,7 @@ public class PaymentConfirmCommandService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
         if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
             payment.fail();
+            stockReservationService.releaseFor(payment.getOrder().getId());
             publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
     }
