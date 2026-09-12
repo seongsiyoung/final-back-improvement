@@ -28,7 +28,6 @@ class TossCircuitBreakerWorkerOccupancy200BypassedTest extends AbstractTossCircu
     static void tomcatThreadsProps(DynamicPropertyRegistry registry) {
         registry.add("server.tomcat.threads.max", () -> TOMCAT_MAX_THREADS);
         registry.add("server.tomcat.threads.min-spare", () -> TOMCAT_MAX_THREADS);
-        registry.add("spring.datasource.hikari.maximum-pool-size", () -> 30);
     }
 
     @Override

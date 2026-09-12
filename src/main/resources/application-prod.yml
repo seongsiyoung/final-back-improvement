@@ -5,7 +5,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: ${JPA_DDL_AUTO}
+      ddl-auto: validate
     show-sql: false
     database: postgresql
     database-platform: org.hibernate.spatial.dialect.postgis.PostgisPG95Dialect
@@ -15,6 +15,16 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 20
+      connection-timeout: 5000
+      leak-detection-threshold: 10000
+
+  task:
+    scheduling:
+      pool:
+        size: 4
 
   data:
     redis:
@@ -113,6 +123,11 @@ security:
     secret: ${JWT_SECRET}
     access-token-validity-seconds: ${JWT_ACCESS_TOKEN_VALIDITY_SECONDS}
     refresh-token-validity-seconds: ${JWT_REFRESH_TOKEN_VALIDITY_SECONDS}
+
+server:
+  tomcat:
+    threads:
+      max: 50
 
 logging:
   level:
