@@ -195,6 +195,8 @@ public class CartService {
     }
 
     private void validateStock(Product product, int requestedQty) {
+        // 가용재고로 막지 않는다. 담는 시점과 결제 시점 사이에 재고는 계속 변하므로 이 검증은
+        // 어차피 최종 판단이 될 수 없다. 최종 재고 판정은 prepare() 가 락을 잡고 한다.
         if (requestedQty > product.getStock()) {
             throw new BusinessException(ErrorCode.PRODUCT_STOCK_NOT_ENOUGH);
         }
