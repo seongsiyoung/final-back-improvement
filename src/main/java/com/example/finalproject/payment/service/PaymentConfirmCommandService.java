@@ -162,6 +162,27 @@ public class PaymentConfirmCommandService {
         }
     }
 
+    /**
+     * 결제창을 열어두고 떠난 READY 결제를 종결하고 선점을 반납한다.
+     *
+     * <p>행을 잠그고 상태를 다시 확인하는 것이 핵심이다. 락이 없으면 스캔이 READY 를 읽고
+     * 반납하는 사이 고객이 startConfirm() 으로 PENDING 에 넘어가 승인까지 받는다 —
+     * 돈은 받았는데 재고는 반납된 상태가 된다.
+     */
+    @Transactional
+    public void expireReadyPayment(Long paymentId) {
+        Payment payment = paymentRepository.findWithLockById(paymentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+
+        if (payment.getPaymentStatus() != PaymentStatus.READY) {
+            return;
+        }
+
+        payment.fail();
+        stockReservationService.releaseFor(payment.getOrder().getId());
+        publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
+    }
+
     @Transactional
     public void markReversalPending(Long paymentId) {
         Payment payment = paymentRepository.findWithLockById(paymentId)

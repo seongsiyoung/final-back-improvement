@@ -68,6 +68,21 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
 
+    /**
+     * 결제창을 열어두고 떠난 준비 결제. 선점을 쥔 채 방치된 건을 찾는다.
+     *
+     * <p>시간 기준이 updatedAt 이 아니라 createdAt 이다. READY 는 만들어진 뒤 바뀌지 않으므로
+     * 두 값이 같지만, "준비한 지 얼마나 됐나"가 판단 근거라는 것을 쿼리에 남긴다.
+     */
+    @Query("SELECT p FROM Payment p "
+            + "WHERE p.paymentStatus = :status "
+            + "AND p.createdAt < :threshold "
+            + "ORDER BY p.createdAt ASC")
+    List<Payment> findExpiredReadyPayments(
+            @Param("status") PaymentStatus status,
+            @Param("threshold") LocalDateTime threshold,
+            Pageable pageable);
+
     Page<Payment> findByPaymentStatusInOrderByUpdatedAtAsc(Collection<PaymentStatus> statuses, Pageable pageable);
 
     long countByPaymentStatusInAndReconcileAttemptsGreaterThanEqual(
