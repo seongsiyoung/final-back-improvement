@@ -20,7 +20,6 @@ import com.example.finalproject.payment.dto.request.TossConfirmRequest;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.product.repository.ProductRepository;
-import com.example.finalproject.product.service.StockReservationService;
 import com.example.finalproject.testsupport.PassThroughCircuitBreakerFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,7 +46,7 @@ class PaymentServiceTest {
                 tossPaymentsClient,
                 paymentConfirmCommandService,
                 PassThroughCircuitBreakerFactory.create(),
-                mock(StockReservationService.class));
+                mock(TerminatedPaymentCleanupService.class));
     }
 
     private PostPaymentConfirmRequest confirmRequest(Long paymentId) {

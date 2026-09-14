@@ -102,6 +102,20 @@ public class Order extends BaseTimeEntity {
         this.status = OrderStatus.CANCELLED;
     }
 
+    /**
+     * 결제가 성립하지 못해 주문을 종결한다.
+     *
+     * <p>아직 PENDING 인 주문만 옮긴다. 결제까지 간 주문은 환불·취소 경로가 상태를 관리하므로
+     * 건드리면 안 된다. 이 메서드가 없으면 결제가 실패·만료로 끝나도 주문이 PENDING 에 남아
+     * InProgressOrderWithdrawalRule 이 그 사용자의 탈퇴를 영구히 막는다.
+     */
+    public void cancelUnpaid() {
+        if (this.status != OrderStatus.PENDING) {
+            return;
+        }
+        this.status = OrderStatus.CANCELLED;
+    }
+
     public void partialCancel() {
         this.status = OrderStatus.PARTIAL_CANCELLED;
     }

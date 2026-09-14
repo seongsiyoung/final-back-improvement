@@ -22,7 +22,6 @@ import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
-import com.example.finalproject.product.service.StockReservationService;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.store.repository.StoreRepository;
 import com.example.finalproject.user.domain.User;
@@ -45,7 +44,7 @@ public class PaymentConfirmCommandService {
     private final PaymentRepository paymentRepository;
     private final OrderLineRepository orderLineRepository;
     private final ProductRepository productRepository;
-    private final StockReservationService stockReservationService;
+    private final TerminatedPaymentCleanupService terminatedPaymentCleanupService;
     private final DeliveryFeeService deliveryFeeService;
     private final StoreOrderRepository storeOrderRepository;
     private final StoreRepository storeRepository;
@@ -146,7 +145,7 @@ public class PaymentConfirmCommandService {
 
         if (payment.getPaymentStatus() == PaymentStatus.PENDING) {
             payment.fail();
-            stockReservationService.releaseFor(payment.getOrder().getId());
+            terminatedPaymentCleanupService.cleanUp(payment);
             publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
     }
@@ -157,7 +156,7 @@ public class PaymentConfirmCommandService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
         if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
             payment.fail();
-            stockReservationService.releaseFor(payment.getOrder().getId());
+            terminatedPaymentCleanupService.cleanUp(payment);
             publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
     }
@@ -179,7 +178,7 @@ public class PaymentConfirmCommandService {
         }
 
         payment.fail();
-        stockReservationService.releaseFor(payment.getOrder().getId());
+        terminatedPaymentCleanupService.cleanUp(payment);
         publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
     }
 

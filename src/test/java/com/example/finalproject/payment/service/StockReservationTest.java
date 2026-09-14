@@ -310,8 +310,9 @@ class StockReservationTest extends IntegrationTestSupport {
         jdbcTemplate.update("update payments set payment_status = ? where id = ?",
                 PaymentStatus.RECONCILIATION_REQUIRED.name(), prepared.getPaymentId());
 
+        // NOT_CHARGED 는 승인 기록과 모순이라 거부된다. 승인 뒤 취소가 확인된 REFUNDED 로 종결한다.
         paymentReconciliationCommandService.resolvePayment(
-                prepared.getPaymentId(), ReconciliationOutcome.NOT_CHARGED, null);
+                prepared.getPaymentId(), ReconciliationOutcome.REFUNDED, prepared.getAmount());
 
         assertThat(reservedOf(productId))
                 .as("이 결제의 선점은 이미 확정됐다. 반납하면 남의 선점을 깎는다")
