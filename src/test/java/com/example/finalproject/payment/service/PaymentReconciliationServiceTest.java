@@ -31,6 +31,7 @@ class PaymentReconciliationServiceTest {
     private TossPaymentsClient tossPaymentsClient;
     private PaymentConfirmCommandService paymentConfirmCommandService;
     private ReconciliationAttemptCommandService reconciliationAttemptCommandService;
+    private ReversalResendService reversalResendService;
     private PaymentReconciliationService paymentReconciliationService;
 
     @BeforeEach
@@ -38,8 +39,10 @@ class PaymentReconciliationServiceTest {
         tossPaymentsClient = mock(TossPaymentsClient.class);
         paymentConfirmCommandService = mock(PaymentConfirmCommandService.class);
         reconciliationAttemptCommandService = mock(ReconciliationAttemptCommandService.class);
+        reversalResendService = mock(ReversalResendService.class);
         paymentReconciliationService = new PaymentReconciliationService(
-                tossPaymentsClient, paymentConfirmCommandService, reconciliationAttemptCommandService);
+                tossPaymentsClient, paymentConfirmCommandService, reconciliationAttemptCommandService,
+                reversalResendService);
     }
 
     private Payment pendingPayment(Long id, String pgOrderId) {
@@ -197,12 +200,15 @@ class PaymentReconciliationServiceTest {
     }
 
     @Test
-    void reconcile_reversalPendingAndDone_doesNotCompleteConfirm() {
+    void reconcile_reversalPendingAndDone_resendsCancel() {
         Payment payment = reversalPendingPayment(7L, "order-7");
         when(tossPaymentsClient.getPaymentByOrderId("order-7")).thenReturn(responseWithStatus("DONE"));
 
         paymentReconciliationService.reconcile(payment);
 
+        // 조회 응답의 paymentKey 를 넘긴다. REVERSAL_PENDING 은 approve() 가 롤백된 상태라
+        // 로컬 paymentKey 가 없다.
+        verify(reversalResendService).resend(7L, "test-payment-key", payment.getAmount());
         verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
         verify(paymentConfirmCommandService, never()).failReversalPending(any());
     }

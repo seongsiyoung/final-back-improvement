@@ -30,6 +30,7 @@ public class PaymentReconciliationService {
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentConfirmCommandService paymentConfirmCommandService;
     private final ReconciliationAttemptCommandService reconciliationAttemptCommandService;
+    private final ReversalResendService reversalResendService;
 
     public void reconcile(Payment payment) {
         if (payment.getPaymentStatus() != PaymentStatus.PENDING
@@ -64,6 +65,20 @@ public class PaymentReconciliationService {
             if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
                 if (CANCELED_STATUS.equals(pg.getStatus())) {
                     paymentConfirmCommandService.failReversalPending(payment.getId());
+                } else if (DONE_STATUS.equals(pg.getStatus())) {
+                    // 승인된 그대로다. 보상 취소가 PG 에 닿지 않았다는 뜻이므로 다시 보낸다.
+                    // 조회만 하고 두면 다음 주기에도 같은 DONE 을 보게 되어 영원히 끝나지 않는다.
+                    //
+                    // DONE 일 때만 보내므로 이미 취소된 건에는 가지 않는다. 멱등키가 원 요청과
+                    // 같은 것은 원 요청의 취소가 아직 인플라이트일 때를 위한 이중 안전장치다.
+                    //
+                    // 조회는 성공했는데 아직 결론이 나지 않았다. 재전송이 실패하면 이 상태가
+                    // 그대로 남으므로 시도로 센다 — 그러지 않으면 계속 실패하는 건이 관리자
+                    // 화면의 정체 집계에 영영 잡히지 않는다.
+                    unresolved = true;
+                    log.info("[REVERSAL_NOT_REACHED_PG] 보상 취소를 재전송함. paymentId={}", payment.getId());
+                    reversalResendService.resend(
+                            payment.getId(), pg.getPaymentKey(), payment.getAmount());
                 } else {
                     unresolved = true;
                     log.info("PG 취소 상태가 확정되지 않아 유지함. paymentId={}, status={}", payment.getId(), pg.getStatus());

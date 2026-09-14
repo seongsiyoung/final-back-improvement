@@ -30,6 +30,7 @@ public class SubscriptionReconciliationService {
     private final TossPaymentsClient tossPaymentsClient;
     private final SubscriptionChargeCommandService subscriptionChargeCommandService;
     private final ReconciliationAttemptCommandService reconciliationAttemptCommandService;
+    private final SubscriptionReversalResendService subscriptionReversalResendService;
 
     public void reconcile(SubscriptionPayment payment) {
         PaymentStatus status = payment.getPaymentStatus();
@@ -68,6 +69,17 @@ public class SubscriptionReconciliationService {
             if (status == PaymentStatus.REVERSAL_PENDING) {
                 if (CANCELED_STATUS.equals(pg.getStatus())) {
                     subscriptionChargeCommandService.failReversalPending(paymentId);
+                } else if (DONE_STATUS.equals(pg.getStatus())) {
+                    // 승인된 그대로다. 보상 취소가 PG 에 닿지 않았다는 뜻이므로 다시 보낸다.
+                    // 구독은 웹훅이 없어 이 스캔이 유일한 복구 수단이다.
+                    //
+                    // 조회는 성공했는데 아직 결론이 나지 않았다. 재전송이 실패하면 이 상태가
+                    // 그대로 남으므로 시도로 센다.
+                    unresolved = true;
+                    log.info("[SUB_REVERSAL_NOT_REACHED_PG] 보상 취소를 재전송함. subscriptionPaymentId={}",
+                            paymentId);
+                    subscriptionReversalResendService.resend(
+                            paymentId, pg.getPaymentKey(), payment.getAmount());
                 } else {
                     unresolved = true;
                     log.info("[SUB_RECONCILE_REVERSAL_UNCONFIRMED] PG 취소 상태가 확정되지 않아 유지함. "
