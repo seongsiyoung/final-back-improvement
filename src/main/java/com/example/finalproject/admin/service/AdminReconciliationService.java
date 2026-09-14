@@ -53,6 +53,8 @@ public class AdminReconciliationService {
     private static final List<PaymentStatus> DANGLING_PAYMENT_STATUSES =
             List.of(PaymentStatus.APPROVED, PaymentStatus.PARTIAL_REFUNDED);
     private static final List<String> PAYMENT_OUTCOMES = List.of("NOT_CHARGED", "REFUNDED");
+    /** 승인 기록이 있는 결제는 미청구로 종결할 수 없다. 고를 수 있는 결과가 하나뿐이다. */
+    private static final List<String> APPROVED_PAYMENT_OUTCOMES = List.of("REFUNDED");
     private static final List<String> REFUND_OUTCOMES = List.of("REFUNDED", "NOT_REFUNDED");
 
     private final UserRepository userRepository;
@@ -163,7 +165,8 @@ public class AdminReconciliationService {
                 payment.getPaymentStatus().name(),
                 payment.getUpdatedAt(),
                 rejectedOrder ? "INVESTIGATE" : "RESOLVE",
-                rejectedOrder ? List.of() : PAYMENT_OUTCOMES,
+                rejectedOrder ? List.of() : payment.hasApprovalRecord()
+                        ? APPROVED_PAYMENT_OUTCOMES : PAYMENT_OUTCOMES,
                 !rejectedOrder,
                 payment.getPgOrderId(),
                 payment.getAmount(),

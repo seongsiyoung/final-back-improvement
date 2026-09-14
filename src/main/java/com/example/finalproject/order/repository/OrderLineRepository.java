@@ -18,7 +18,8 @@ public interface OrderLineRepository extends JpaRepository<OrderLine, Long> {
      * <p>paidAt 이 있는 결제는 제외한다. 승인이 끝난 결제는 completeConfirm() 이 선점을 실재고
      * 차감으로 확정했으므로 더 쥐고 있지 않다. 그런 결제도 RECONCILIATION_REQUIRED 로 올 수 있다
      * — 취소 거절(handleCancelRejection)이 승인 완료 주문의 결제를 그 상태로 올린다.
-     * paidAt 은 approve() 에서만 채워지고 지워지지 않아 확정 여부의 판별자가 된다.
+     * 판별 기준은 Payment#hasApprovalRecord 와 같다. JPQL 에서는 메서드를 부를 수 없어
+     * 같은 조건을 컬럼으로 쓴다.
      */
     @Query("SELECT line.productId, SUM(line.quantity) FROM OrderLine line "
             + "JOIN Payment p ON p.order.id = line.order.id "

@@ -26,7 +26,6 @@ import com.example.finalproject.payment.service.pg.PgCallOutcome;
 import com.example.finalproject.payment.service.pg.PgFailureClassifier;
 import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
-import com.example.finalproject.product.service.StockReservationService;
 import com.example.finalproject.user.domain.Address;
 import com.example.finalproject.user.domain.User;
 import feign.FeignException;
@@ -71,7 +70,7 @@ public class PaymentService {
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentConfirmCommandService paymentConfirmCommandService;
     private final CircuitBreakerFactory<?, ?> circuitBreakerFactory;
-    private final StockReservationService stockReservationService;
+    private final TerminatedPaymentCleanupService terminatedPaymentCleanupService;
 
 
     @Transactional
@@ -89,7 +88,7 @@ public class PaymentService {
 
         replaceable.forEach(payment -> {
             payment.fail();
-            stockReservationService.releaseFor(payment.getOrder().getId());
+            terminatedPaymentCleanupService.cleanUp(payment);
         });
 
         List<Product> products = lockValidateAndReserveProducts(request);
@@ -109,17 +108,28 @@ public class PaymentService {
         );
     }
 
-    /** 대체 가능한 옛 READY 결제를 돌려준다. 미확정 결제가 하나라도 있으면 진행을 막는다. */
+    /**
+     * 대체 가능한 옛 READY 결제를 돌려준다. 미확정 결제가 하나라도 있으면 진행을 막는다.
+     *
+     * <p>승인 기록이 있는 결제는 판단에서 제외한다. 취소 거절이나 환불 반영 실패가 승인 완료
+     * 결제도 RECONCILIATION_REQUIRED 로 올리는데, 그 결제는 이미 끝났고 주문도 PAID 라
+     * 중복 청구 위험이 없다. 선점도 쥐고 있지 않으므로 "사용자당 활성 선점 하나"도 깨지지 않는다.
+     * 차단도 대체도 하지 않고 그대로 둔다 — 실패로 종결하면 돈을 받은 결제가 거짓이 된다.
+     *
+     * <p>조회는 좁히지 않는다. 비관적 락이 걸려 있어 대상을 줄이면 락 범위가 달라진다.
+     */
     private List<Payment> loadReplaceablePaymentsOrBlock(Long userId) {
-        List<Payment> activePayments = paymentRepository.findByOrder_UserIdAndPaymentStatusIn(
-                userId, ACTIVE_PAYMENT_STATUSES);
+        List<Payment> unconfirmed = paymentRepository.findByOrder_UserIdAndPaymentStatusIn(
+                        userId, ACTIVE_PAYMENT_STATUSES).stream()
+                .filter(payment -> !payment.hasApprovalRecord())
+                .toList();
 
-        if (activePayments.stream().anyMatch(payment ->
+        if (unconfirmed.stream().anyMatch(payment ->
                 UNRESOLVED_PAYMENT_STATUSES.contains(payment.getPaymentStatus()))) {
             throw new BusinessException(ErrorCode.PAYMENT_IN_PROGRESS);
         }
 
-        return activePayments;
+        return unconfirmed;
     }
 
     /**

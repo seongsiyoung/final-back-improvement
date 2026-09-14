@@ -163,6 +163,8 @@ public enum ErrorCode {
             "결제 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 처음부터 다시 시도해주세요."),
     PAYMENT_RESULT_PENDING(HttpStatus.CONFLICT, "PAYMENT-012",
             "결제 결과를 확인 중입니다. 결제를 다시 시도하지 마세요."),
+    APPROVED_PAYMENT_CANNOT_BE_NOT_CHARGED(HttpStatus.BAD_REQUEST, "PAYMENT-013",
+            "승인 기록이 있는 결제를 미청구로 종결할 수 없습니다."),
 
 
     // ORDER (order-checkout)
