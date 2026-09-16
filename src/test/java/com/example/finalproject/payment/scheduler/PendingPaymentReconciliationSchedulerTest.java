@@ -66,32 +66,18 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
     @BeforeEach
     void setUp() {
         user = seeder.seedUserWithAddress("scheduler-" + System.nanoTime() + "@test.com", "password1234!");
-        // 기본 오너 이메일로 시드하면 같은 스키마를 쓰는 다른 클래스와 상품을 공유해 재고가 섞인다.
-        // 이 테스트는 재고 부족을 실패 조건으로 쓰므로 자기 스토어를 따로 둔다. 오너는 상수로
-        // 고정한다 — 매번 새로 만들면 users.phone 이 이메일 해시 기반이라 유니크 충돌 여지가 커진다.
         Store store = seeder.seedStoreWithProducts(
                 OWNER_EMAIL, 1, 100);
         product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0);
     }
 
-    /**
-     * 서버가 죽어 completeConfirm()이 아예 실행되지 못한 상황을 재현한다 — PaymentService/
-     * PaymentConfirmCommandService의 어떤 보상 로직도 거치지 않고 저장소에 PENDING 결제를
-     * 주문 라인(OrderLine)까지 갖춘 채로 직접 심는다. quantity가 completeConfirm()의 재고
-     * 차감·StoreOrder 생성 로직을 실제로 태우는 데 필요하다.
-     *
-     * <p>선점도 함께 만든다. 실제 PENDING 결제는 전부 prepare()를 거쳐 오므로 그 수량이
-     * 이미 잡혀 있고, completeConfirm()은 그 선점을 확정하는 것이기 때문이다.
-     */
+    /** 후처리 전 중단된 PENDING 결제를 만든다. */
     private Payment seedStuckPayment(int quantity) {
         return seedStuckPayment(quantity, product.getId(), true);
     }
 
-    /**
-     * 존재하지 않는 상품을 가리키는 주문 라인을 심는다. completeConfirm()이 상품을 찾지 못해
-     * 실패하므로, 같은 배치의 다른 결제와 상태를 공유하지 않는 실패 장치가 된다.
-     */
+    /** 후처리가 실패하는 PENDING 결제를 만든다. */
     private Payment seedStuckPaymentWithUnknownProduct() {
         return seedStuckPayment(1, Long.MAX_VALUE, false);
     }
@@ -183,9 +169,7 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
     @Test
     void reconcileStalePendingPayments_whenOnePaymentFails_stillProcessesTheOthers() {
-        // A: 주문 라인이 없는 상품을 가리켜 completeConfirm() 안에서 실패한다.
         Payment failingPayment = seedStuckPaymentWithUnknownProduct();
-        // B: 정상적으로 완결되어야 한다.
         Payment succeedingPayment = seedStuckPayment(1);
         backdateUpdatedAt(failingPayment.getId(), LocalDateTime.now().minusMinutes(10));
         backdateUpdatedAt(succeedingPayment.getId(), LocalDateTime.now().minusMinutes(10));

@@ -60,12 +60,6 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
         // 톰캣 워커 수까지 줄어들어 영향 범위가 필요 이상으로 넓어진다.
         registry.add("server.tomcat.threads.max", () -> TOMCAT_MAX_THREADS);
         registry.add("server.tomcat.threads.min-spare", () -> TOMCAT_MAX_THREADS);
-        // 전역 application-test.yml의 풀은 2개인데, 결제를 종결하는 요청 하나가 커넥션을 둘 쥔다.
-        // failPending() 커밋 뒤 PaymentResolvedSseListener(AFTER_COMMIT + REQUIRES_NEW)가 같은
-        // 스레드에서 도는데, Spring 은 triggerAfterCommit() 을 cleanupAfterCompletion() 보다 먼저
-        // 실행하므로 바깥 커넥션이 아직 반납되지 않은 상태에서 REQUIRES_NEW 가 두 번째를 요청한다.
-        // 풀이 2면 이 구간에 스레드 둘만 들어가도 서로를 기다려 connectionTimeout(30초)까지 간다.
-        // 그래서 필요한 크기는 워커 수가 아니라 워커 수 × 2 다.
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> TOMCAT_MAX_THREADS * 2);
     }
 
@@ -80,19 +74,12 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
 
     @BeforeEach
     void setUp() {
-        // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
-        // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
-        // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
         Store store = seeder.seedStoreWithProducts(1, 1000);
 
         productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0).getId();
     }
 
-    // 이 테스트는 confirm 15건이 동시에 워커를 붙잡고 있어야 성립한다. 사용자당 활성 결제는
-    // 하나뿐이라(PaymentService.replaceReadyPaymentOrBlockUnresolvedPayment) 한 사용자로 15건을
-    // 만들면 앞의 14건이 prepare 단계에서 FAILED 로 밀려나고, confirm 이 Toss 까지 가지 않아
-    // 워커가 소진되지 않는다. 그래서 결제마다 사용자를 따로 둔다.
     private String newCustomerToken() {
         String email = "exhaustion-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");

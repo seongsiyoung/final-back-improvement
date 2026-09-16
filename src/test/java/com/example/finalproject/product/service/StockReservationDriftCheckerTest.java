@@ -23,12 +23,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/**
- * 선점 장부가 어긋났을 때 점검이 그것을 찾아내되 고치지는 않는지 고정한다.
- *
- * <p>점검은 DB 전체를 훑으므로 반환 목록에는 다른 테스트가 남긴 상품도 섞일 수 있다.
- * 그래서 건수가 아니라 이 테스트가 만든 상품이 목록에 있는지만 본다.
- */
+/** 선점 장부 불일치 탐지 결과를 검증한다. */
 class StockReservationDriftCheckerTest extends IntegrationTestSupport {
 
     @Autowired private StockReservationDriftChecker driftChecker;
@@ -48,7 +43,6 @@ class StockReservationDriftCheckerTest extends IntegrationTestSupport {
 
         assertThat(driftChecker.reportDrift()).doesNotContain(productId);
 
-        // 종결하면 선점도 함께 빠지므로 여전히 맞는다.
         paymentConfirmCommandService.startConfirm(
                 buyerEmail, prepared.getPaymentId(), "drift-key-" + System.nanoTime());
         paymentConfirmCommandService.failPending(prepared.getPaymentId());
@@ -78,7 +72,6 @@ class StockReservationDriftCheckerTest extends IntegrationTestSupport {
         seeder.seedUserWithAddress(buyer, "buyer1234!");
         PostPaymentPrepareResponse prepared = paymentService.prepare(buyer, prepareRequest(productId, 3));
         approve(buyer, prepared);
-        // 취소 거절 같은 경로는 승인 완료 결제도 확인 필요로 올린다.
         forceStatus(prepared.getPaymentId(), PaymentStatus.RECONCILIATION_REQUIRED);
 
         assertThat(driftChecker.reportDrift())
@@ -113,7 +106,6 @@ class StockReservationDriftCheckerTest extends IntegrationTestSupport {
     void whenSettledPaymentStillHoldsReservation_reportsDrift() {
         Long productId = seedProduct(10);
         PostPaymentPrepareResponse prepared = prepare(productId, 3);
-        // 반납 없이 결제만 종결한 상태를 만든다.
         forceStatus(prepared.getPaymentId(), PaymentStatus.FAILED);
 
         assertThat(driftChecker.reportDrift()).contains(productId);

@@ -68,8 +68,6 @@ class AvailableStockVisibilityTest extends IntegrationTestSupport {
     void ownerProductList_showsRealStock() {
         Long productId = seedProduct(10);
         reserve(productId, 4);
-        // GetMyProductResponse.from 은 카테고리 LAZY 연관을 탄다. 실제 조회 경로와 같게
-        // 트랜잭션 안에서 만든다.
         Integer shownStock = transactionTemplate.execute(status ->
                 GetMyProductResponse.from(productRepository.findById(productId).orElseThrow()).getStock());
 

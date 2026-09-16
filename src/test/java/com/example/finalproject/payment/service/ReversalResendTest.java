@@ -38,11 +38,7 @@ import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuit
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/**
- * 나가지 못한 보상 취소를 재조정이 다시 보내는지 고정한다.
- *
- * <p>조회만 하고 두면 다음 주기에도 같은 DONE 을 보게 되어 고객 돈이 영영 묶인다.
- */
+/** 미전송 보상 취소의 재전송 경로를 검증한다. */
 class ReversalResendTest extends IntegrationTestSupport {
 
     @Autowired private PaymentService paymentService;
@@ -110,8 +106,6 @@ class ReversalResendTest extends IntegrationTestSupport {
                 .as("모르면 건드리지 않는다. 다음 주기가 다시 집는다")
                 .isEqualTo(PaymentStatus.REVERSAL_PENDING);
 
-        // 다음 주기에 성공하면 종결된다. 이미 예외를 던지도록 스텁된 호출은 when() 안에서
-        // 그대로 터지므로 doReturn 으로 덮는다.
         Mockito.doReturn(mock(TossCancelResponse.class))
                 .when(tossPaymentsClient).cancel(anyString(), any(), anyString());
         paymentReconciliationService.reconcile(reload(paymentId));
@@ -167,7 +161,6 @@ class ReversalResendTest extends IntegrationTestSupport {
         assertThat(statusOf(paymentId)).isEqualTo(PaymentStatus.REVERSAL_PENDING);
     }
 
-    /** 승인은 성공했는데 재고 부족으로 반영이 실패하고, 보상 취소도 나가지 못한 상태를 만든다. */
     private Long seedReversalPending() {
         RefundScenarioSeeder.ConfirmScenario scenario =
                 scenarioSeeder.outOfStockPayment("resend-" + System.nanoTime() + "@test.com");
@@ -178,8 +171,6 @@ class ReversalResendTest extends IntegrationTestSupport {
                 .isInstanceOf(RuntimeException.class);
         assertThat(statusOf(scenario.paymentId())).isEqualTo(PaymentStatus.REVERSAL_PENDING);
 
-        // 시드가 걸어둔 스텁이 본 검증까지 살아 있으면 재전송 호출이 그 스텁을 타고, 호출 횟수도
-        // 시드 몫이 섞인다. 상태만 남기고 스텁과 기록을 지운다.
         Mockito.reset(tossPaymentsClient);
         return scenario.paymentId();
     }

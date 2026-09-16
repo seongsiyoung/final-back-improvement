@@ -44,10 +44,7 @@ public class PaymentReconciliationService {
                 lookupSucceeded = true;
             } catch (FeignException.NotFound e) {
                 lookupSucceeded = true;
-                // REVERSAL_PENDING은 Toss가 승인 성공을 돌려준 뒤에만 붙는 상태다.
-                // 그런데 조회에 기록이 없다면 두 사실이 모순이므로 승인 여부를 단정할 수 없다.
-                // FAILED로 적으면 돈이 나간 결제를 "돈이 안 나갔음"으로 확정하게 되고,
-                // 그 상태를 집어가는 스케줄러 조건이 없어 영구히 사라진다.
+                // 승인 성공 후 상태와 PG 미존재 응답이 모순이므로 자동 종결하지 않는다.
                 if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
                     log.error("보상 취소 대상인데 PG에 결제 기록이 없어 확인 필요로 남김. paymentId={}, pgOrderId={}",
                             payment.getId(), payment.getPgOrderId());
@@ -55,7 +52,6 @@ public class PaymentReconciliationService {
                     return;
                 }
 
-                // PENDING은 승인 응답을 받은 적이 없다. 기록이 없다면 승인된 적 없음이 확정된다.
                 log.info("PG에 결제 기록이 없어 실패 처리함. paymentId={}, pgOrderId={}",
                         payment.getId(), payment.getPgOrderId());
                 paymentConfirmCommandService.failPending(payment.getId());
@@ -66,15 +62,7 @@ public class PaymentReconciliationService {
                 if (CANCELED_STATUS.equals(pg.getStatus())) {
                     paymentConfirmCommandService.failReversalPending(payment.getId());
                 } else if (DONE_STATUS.equals(pg.getStatus())) {
-                    // 승인된 그대로다. 보상 취소가 PG 에 닿지 않았다는 뜻이므로 다시 보낸다.
-                    // 조회만 하고 두면 다음 주기에도 같은 DONE 을 보게 되어 영원히 끝나지 않는다.
-                    //
-                    // DONE 일 때만 보내므로 이미 취소된 건에는 가지 않는다. 멱등키가 원 요청과
-                    // 같은 것은 원 요청의 취소가 아직 인플라이트일 때를 위한 이중 안전장치다.
-                    //
-                    // 조회는 성공했는데 아직 결론이 나지 않았다. 재전송이 실패하면 이 상태가
-                    // 그대로 남으므로 시도로 센다 — 그러지 않으면 계속 실패하는 건이 관리자
-                    // 화면의 정체 집계에 영영 잡히지 않는다.
+                    // PG에 반영되지 않은 보상 취소를 같은 멱등키로 재전송한다.
                     unresolved = true;
                     log.info("[REVERSAL_NOT_REACHED_PG] 보상 취소를 재전송함. paymentId={}", payment.getId());
                     reversalResendService.resend(

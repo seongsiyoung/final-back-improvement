@@ -16,13 +16,7 @@ import java.util.Optional;
 
 public interface SubscriptionRepository extends JpaRepository<Subscription, Long> {
 
-    /**
-     * 비관적 락으로 구독을 조회한다. SubscriptionChargeCommandService.startCharge()가
-     * 같은 결제주기 중복 승인 방지 가드(존재 확인) 직후 새 SubscriptionPayment를 저장하는
-     * 사이의 TOCTOU 레이스를 좁히는 데 쓴다 — 두 트랜잭션이 같은 구독에 대해 동시에
-     * startCharge()를 호출해도 락을 먼저 획득한 쪽만 가드~저장 구간을 진행하고,
-     * 나중 트랜잭션은 앞선 트랜잭션이 커밋할 때까지 대기한다.
-     */
+    /** 동일 구독의 청구 시작을 직렬화하기 위해 잠금과 함께 조회한다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Subscription> findWithLockById(Long id);
 

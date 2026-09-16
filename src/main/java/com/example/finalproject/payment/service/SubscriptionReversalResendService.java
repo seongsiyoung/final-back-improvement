@@ -8,15 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-/**
- * 구독 결제에서 나가지 못한 보상 취소를 다시 보낸다.
- *
- * <p>일반 결제(ReversalResendService)와 판단은 같고 게이트웨이와 멱등키만 다르다.
- * 구독은 웹훅이 없어 이 스캔이 유일한 복구 수단이다.
- *
- * <p>트랜잭션을 열지 않는다. PG 호출은 트랜잭션 밖이어야 하고, 상태 전이는 호출되는
- * 커맨드 서비스가 각자 자기 트랜잭션에서 한다.
- */
+/** PG에 반영되지 않은 구독 결제 보상 취소를 재전송한다. */
 @Slf4j
 @Service
 @RequiredArgsConstructor

@@ -49,9 +49,6 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
 
         String email = "idem-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
-        // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
-        // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
         Store store = seeder.seedStoreWithProducts(1, 100);
 
         LoginRequest loginRequest = new LoginRequest();
@@ -76,9 +73,6 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentPrepareResponse>>() {});
         paymentId = prepareResponse.getBody().getData().getPaymentId();
 
-        // 이 시나리오의 전제는 "Toss 가 승인 요청을 받은 적이 없다"는 것이다. 타임아웃 뒤
-        // PaymentService.lookupPaymentOnce() 가 pgOrderId 로 되묻는데, 그 응답을 WireMock 의
-        // 기본 404 에 맡기면 전제가 코드에 남지 않는다. 명시적으로 스텁한다.
         toss.stubGetPaymentByOrderIdNotFound(prepareResponse.getBody().getData().getPgOrderId());
     }
 
@@ -94,10 +88,6 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
         ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> firstResponse = restTemplate.exchange(
                 "/api/payments/confirm", HttpMethod.POST, entity,
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
-        // 읽기 타임아웃은 RESULT_UNKNOWN 이다. 그 직후 pgOrderId 로 Toss 에 되묻고(setUp 에서
-        // 404 로 스텁해 둔 경로), 기록이 없다는 응답을 받는다.
-        // PENDING 에서의 404 는 "승인된 적 없음"이 확정된 것이므로(FLOWS.md) 결제를 FAILED 로
-        // 종결하고 PAYMENT-010 을 돌려준다. 미확정인 채로 500 을 흘리던 옛 동작이 아니다.
         assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(firstResponse.getBody()).isNotNull();
         assertThat(firstResponse.getBody().isSuccess()).isFalse();

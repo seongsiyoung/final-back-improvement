@@ -85,13 +85,9 @@ public class PaymentConfirmCommandService {
         Order order = payment.getOrder();
         List<OrderLine> lines = orderLineRepository.findAllByOrderId(order.getId());
 
-        // 잠그는 순서는 prepare() 의 선점, releaseFor() 의 반납과 같은 productId 오름차순이다.
-        // findAllByOrderId 에는 ORDER BY 가 없어 DB 반환 순서를 믿을 수 없다.
+        // 상품 잠금 순서를 선점·반납 경로와 맞춘다.
         lines = lines.stream().sorted(Comparator.comparing(OrderLine::getProductId)).toList();
 
-        // prepare() 가 이미 선점해 둔 수량을 실재고 차감으로 확정한다. 가용재고 확인은
-        // 선점 시점에 끝났으므로 여기서 다시 검사하지 않는다 — 돈이 나간 뒤 재고 부족으로
-        // 주문이 실패하는 경로를 만들지 않으려는 것이다.
         for (OrderLine line : lines) {
             Product product = productRepository.findByIdForUpdate(line.getProductId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
@@ -161,13 +157,7 @@ public class PaymentConfirmCommandService {
         }
     }
 
-    /**
-     * 결제창을 열어두고 떠난 READY 결제를 종결하고 선점을 반납한다.
-     *
-     * <p>행을 잠그고 상태를 다시 확인하는 것이 핵심이다. 락이 없으면 스캔이 READY 를 읽고
-     * 반납하는 사이 고객이 startConfirm() 으로 PENDING 에 넘어가 승인까지 받는다 —
-     * 돈은 받았는데 재고는 반납된 상태가 된다.
-     */
+    /** READY 상태를 잠금 재확인한 뒤 결제와 선점을 종결한다. */
     @Transactional
     public void expireReadyPayment(Long paymentId) {
         Payment payment = paymentRepository.findWithLockById(paymentId)

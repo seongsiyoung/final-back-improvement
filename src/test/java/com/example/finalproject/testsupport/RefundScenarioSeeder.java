@@ -58,22 +58,15 @@ public class RefundScenarioSeeder {
     }
 
     private ConfirmScenario confirmScenario(String buyerEmail, int stock) {
-        // 오너를 지정하지 않으면 전역 매장 하나를 재사용한다. 이 시나리오는 선점을 만들고
-        // 대부분 승인까지 가지 않아 선점이 남으므로, 공유하면 그 상품의 가용재고가 시나리오마다
-        // 줄어 다른 테스트를 재고 부족으로 깨뜨린다. 시나리오마다 전용 매장을 쓴다.
         Store store = loadTestDataSeeder.seedStoreWithProducts(
                 "confirm-scenario-" + System.nanoTime() + "@test.com", 1, stock);
         User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
-        // findAll() 로 전부 올린 뒤 거르면 검색 인덱스 시더가 남긴 수천 건까지 영속성 컨텍스트에
-        // 들어온다. 스토어로 좁혀 조회한다.
         Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().stream().findFirst().orElseThrow();
         if (stock == 0) {
             ReflectionTestUtils.setField(product, "stock", 0);
             productRepository.save(product);
         } else {
-            // 실제 READY 결제는 prepare() 가 선점을 잡아둔 상태다. 승인 확정이 그 선점을
-            // 실재고 차감으로 바꾸므로 시더도 같은 상태를 만든다.
             product.reserve(1);
             productRepository.save(product);
         }
@@ -292,7 +285,6 @@ public class RefundScenarioSeeder {
     }
 
     /** 장부 규칙 위반을 만든다. 결제는 REFUND_REQUESTED 인데 이미 전액 환불된 것으로 기록돼 있다. */
-    /** 이미 만들어진 매장 주문에 미확정 환불 행을 붙인다. 다중 매장 시나리오용. */
     public void stuckRefundOn(RefundTarget target, RefundStatus status) {
         Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
         PaymentRefund refund = PaymentRefund.builder()
@@ -308,7 +300,6 @@ public class RefundScenarioSeeder {
         paymentRefundRepository.save(refund);
     }
 
-    /** 다른 매장 환불만 끝나 결제가 부분 환불로 남은 상태. */
     public void forcePartiallyRefundedPayment(Long orderId) {
         Payment payment = paymentRepository.findByOrder_Id(orderId).orElseThrow();
         jdbcTemplate.update("update payments set payment_status = ?, refunded_amount = ? where id = ?",

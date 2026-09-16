@@ -55,18 +55,12 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
 
     @BeforeEach
     void setUp() {
-        // 시드가 돌려준 스토어를 그대로 쓴다. findAll().findFirst() 로 아무 스토어나 집으면
-        // 같은 스키마를 쓰는 다른 테스트(예: 검색 인덱스 시더)가 만든 스토어를 집을 수 있고,
-        // 그 스토어는 배달 가능 거리 밖이라 prepare 가 DELIVERY_NOT_AVAILABLE 로 실패한다.
         Store store = seeder.seedStoreWithProducts(1, 100);
 
         productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0).getId();
     }
 
-    // 결제마다 새 사용자를 쓴다. 사용자당 활성 결제는 하나뿐이라
-    // (PaymentService.replaceReadyPaymentOrBlockUnresolvedPayment), 회로가 OPEN이라 미확정으로
-    // 남은 결제가 있으면 같은 사용자의 다음 prepare 가 PAYMENT_IN_PROGRESS 로 막힌다.
     private String newCustomerToken() {
         String email = "cb-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
@@ -109,9 +103,6 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         headers.setBearerAuth(accessToken);
         PostPaymentConfirmRequest confirmRequest = new PostPaymentConfirmRequest();
         ReflectionTestUtils.setField(confirmRequest, "paymentId", paymentId);
-        // Payment.paymentKey 는 UNIQUE 다. completeConfirm() 이 요청의 paymentKey 를 그대로 저장하므로
-        // 고정값을 쓰면 승인에 성공하는 두 번째 결제부터 DataIntegrityViolationException 으로 500이 된다.
-        // 회로는 PG 호출만 기록하고 DB 실패는 회로 밖이라, 그래도 CLOSED 단언은 통과해 실패가 가려진다.
         ReflectionTestUtils.setField(confirmRequest, "paymentKey", "test-payment-key-" + paymentId);
         return restTemplate.exchange("/api/payments/confirm", HttpMethod.POST,
                 new HttpEntity<>(confirmRequest, headers), String.class);
@@ -122,18 +113,11 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         toss.server.stubFor(WireMock.post(urlPathMatching("/v1/payments/confirm"))
                 .willReturn(WireMock.aResponse().withStatus(500)));
 
-        // 사용자당 활성 결제가 하나뿐이라 결제마다 사용자를 나눠야 하는데, 사용자 생성·로그인을
-        // 루프 안에서 하면 한 바퀴가 waitDurationInOpenState(500ms)를 넘겨 회로가 도중에
-        // HALF_OPEN으로 전이된다. 토큰은 계측 구간 밖에서 미리 만들어 둔다.
         Iterator<String> customers = IntStream.range(0, 9)
                 .mapToObj(i -> newCustomerToken())
                 .toList()
                 .iterator();
 
-        // minimumNumberOfCalls(5)를 채우는 것은 confirm 횟수가 아니라 회로 호출 횟수다. 승인이
-        // RESULT_UNKNOWN이면 PaymentService가 같은 회로로 pgOrderId 재조회를 한 번 더 하므로
-        // (9-A Task 2) confirm 1건이 회로 호출 2건을 쓴다. 그래서 3번째 confirm에서 5건이
-        // 채워져 OPEN이 되고, WireMock에 도달한 confirm은 3건이다.
         for (int i = 0; i < 5; i++) {
             confirmAs(customers.next());
         }
@@ -163,7 +147,6 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         // 완전한 CLOSED 복귀를 증명하려면 3건 모두 성공시켜야 한다.
         toss.stubConfirmSuccess();
         for (int i = 0; i < 3; i++) {
-            // 상태 단언만으로는 부족하다 — 승인 이후 경로가 깨져도 회로는 CLOSED 로 닫힌다.
             assertThat(confirmAs(customers.next()).getStatusCode().is2xxSuccessful()).isTrue();
         }
 

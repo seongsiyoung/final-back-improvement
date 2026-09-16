@@ -35,7 +35,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** prepare() 선점과 completeConfirm() 확정이 실재고를 정확히 한 번만 줄이는지 고정한다. */
 class StockReservationTest extends IntegrationTestSupport {
 
     @Autowired private PaymentService paymentService;
@@ -123,8 +122,6 @@ class StockReservationTest extends IntegrationTestSupport {
         int buyers = 6;
         Long productId = seedProduct(stock);
 
-        // 재고보다 많은 구매자가 동시에 같은 상품을 담는다. 두 요청이 실제로 겹치는지는
-        // 강제하지 않으며, 겹치지 않고 순차로 실행돼도 이 단언은 성립한다.
         List<Callable<Boolean>> attempts = new ArrayList<>();
         for (int i = 0; i < buyers; i++) {
             String email = newBuyer("race-" + i);
@@ -150,8 +147,6 @@ class StockReservationTest extends IntegrationTestSupport {
         String first = newBuyer("order-a");
         String second = newBuyer("order-b");
 
-        // 요청이 담은 순서를 서로 반대로 고정한다. 구현이 productId 오름차순으로 잠그지
-        // 않으면 두 트랜잭션이 상대의 락을 마주 기다려 PostgreSQL 이 한쪽을 데드락으로 중단시킨다.
         List<Boolean> results = runConcurrently(List.of(
                 () -> tryPrepare(first, prepareRequest(orderedQuantities(smaller, larger))),
                 () -> tryPrepare(second, prepareRequest(orderedQuantities(larger, smaller)))));
@@ -191,7 +186,6 @@ class StockReservationTest extends IntegrationTestSupport {
         return action.call();
     }
 
-    /** 선점에 성공하면 true, 재고 부족이나 데드락 등으로 실패하면 false. */
     private boolean tryPrepare(String email, PostPaymentPrepareRequest request) {
         try {
             paymentService.prepare(email, request);
@@ -286,7 +280,6 @@ class StockReservationTest extends IntegrationTestSupport {
         String buyer = newBuyer("approved");
         PostPaymentPrepareResponse prepared = paymentService.prepare(buyer, prepareRequest(productId, 3));
         approve(buyer, prepared);
-        // 같은 상품을 다른 사용자가 진행 중이다. 확정된 건을 또 반납하면 이 선점이 대신 깎인다.
         paymentService.prepare(newBuyer("bystander-fail"), prepareRequest(productId, 2));
 
         paymentConfirmCommandService.failPending(prepared.getPaymentId());
@@ -306,11 +299,9 @@ class StockReservationTest extends IntegrationTestSupport {
         approve(buyer, prepared);
         paymentService.prepare(newBuyer("bystander-admin"), prepareRequest(productId, 2));
 
-        // 취소 거절 같은 경로는 승인 완료 결제도 확인 필요로 올린다.
         jdbcTemplate.update("update payments set payment_status = ? where id = ?",
                 PaymentStatus.RECONCILIATION_REQUIRED.name(), prepared.getPaymentId());
 
-        // NOT_CHARGED 는 승인 기록과 모순이라 거부된다. 승인 뒤 취소가 확인된 REFUNDED 로 종결한다.
         paymentReconciliationCommandService.resolvePayment(
                 prepared.getPaymentId(), ReconciliationOutcome.REFUNDED, prepared.getAmount());
 
@@ -365,7 +356,6 @@ class StockReservationTest extends IntegrationTestSupport {
         Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0);
         if (stock == 0) {
-            // 재고 0이면 시더가 비활성으로 두지 않으므로 판매 상태는 그대로 두고 수량만 맞춘다.
             jdbcTemplate.update("update products set stock = 0 where id = ?", product.getId());
         }
         return product.getId();

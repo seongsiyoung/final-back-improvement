@@ -80,10 +80,6 @@ public class LoadTestDataSeeder {
         return user;
     }
 
-    /**
-     * 오너 전화번호는 User.phone 의 UNIQUE 제약을 받는다. 이메일 해시에서 뽑으면 값 공간이
-     * 1만 개뿐이라 오너가 수십 명만 돼도 생일 문제로 충돌한다. 순번은 겹칠 수가 없다.
-     */
     private static final AtomicInteger OWNER_PHONE_SEQUENCE = new AtomicInteger();
 
     public Store seedStoreWithProducts(int productCount, int stockPerProduct) {

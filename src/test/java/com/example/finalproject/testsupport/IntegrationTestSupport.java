@@ -25,10 +25,6 @@ public abstract class IntegrationTestSupport {
     protected static final PostgreSQLContainer<?> POSTGRES;
     protected static final GenericContainer<?> REDIS;
 
-    /**
-     * 모든 통합 테스트가 공유하는 Toss 대역. 클래스마다 따로 띄우면 그 선언이 컨텍스트 캐시 키를
-     * 쪼개 같은 설정인데도 컨텍스트가 열 벌 넘게 만들어진다.
-     */
     @RegisterExtension
     protected static final SharedTossStub toss = new SharedTossStub();
 
@@ -60,11 +56,6 @@ public abstract class IntegrationTestSupport {
     @Autowired(required = false)
     private CircuitBreakerFactory<?, ?> circuitBreakerFactoryForIsolation;
 
-    /**
-     * 컨텍스트를 공유하므로 {@code CircuitBreakerRegistry} 도 공유된다. PG 실패를 만드는 테스트가
-     * 회로를 열어두면 뒤따르는 테스트의 호출이 {@code NOT_SENT} 로 떨어져 엉뚱하게 실패한다.
-     * 테스트마다 회로를 닫힌 상태로 되돌린다.
-     */
     @BeforeEach
     void resetCircuitBreakers() {
         if (circuitBreakerFactoryForIsolation instanceof Resilience4JCircuitBreakerFactory factory) {

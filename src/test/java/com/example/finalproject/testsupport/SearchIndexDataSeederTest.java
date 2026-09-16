@@ -10,14 +10,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-/*
- * 이 클래스는 스키마를 자기가 소유한다고 가정한다 — clearPreviousDataset() 이 이름 prefix 로
- * 스토어와 상품을 지우는데, 같은 스키마를 쓰는 다른 테스트가 그 스토어에 주문·환불·배송을
- * 걸어두면 FK 로 막힌다. 컨텍스트를 공유하면서 스키마 수명이 길어져 실제로 발생했다.
- * 참조 테이블을 하나씩 쫓는 대신 스키마를 새로 만든다 (ddl-auto: create-drop).
- * ClassMode 에 BEFORE_AND_AFTER 는 없다. 뒤 클래스로 5,000건이 남지만, 스토어를
- * findAll().findFirst() 로 집던 곳을 모두 시드 반환값으로 바꿔 영향을 없앴다.
- */
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class SearchIndexDataSeederTest extends IntegrationTestSupport {
 

@@ -42,8 +42,7 @@ public class PaymentReconciliationCommandService {
             throw new BusinessException(ErrorCode.INVALID_PAYMENT_CANCEL_STATUS);
         }
         if (outcome == ReconciliationOutcome.NOT_CHARGED) {
-            // NOT_CHARGED 는 "PG 에 승인 기록이 없다"는 뜻이라 로컬 승인 기록과 모순이다.
-            // 그대로 실패로 적으면 돈은 받고 물건은 나간 주문이 실패로 기록돼 정산이 어긋난다.
+            // 승인 기록이 있으면 미청구로 종결할 수 없다.
             if (payment.hasApprovalRecord()) {
                 throw new BusinessException(ErrorCode.APPROVED_PAYMENT_CANNOT_BE_NOT_CHARGED);
             }

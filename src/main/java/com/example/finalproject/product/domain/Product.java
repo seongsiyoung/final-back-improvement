@@ -62,8 +62,7 @@ public class Product extends BaseTimeEntity {
     @Column(nullable = false)
     private Integer stock = 0;
 
-    // 결제가 진행 중이라 잡혀 있는 수량. stock 은 승인이 끝나야 줄어들고, 그 전까지는
-    // 이 값만 늘어난다. 가용재고는 stock - reserved 이며 컬럼으로 두지 않는다.
+    // 결제 승인 전 선점 수량
     @Column(nullable = false, columnDefinition = "integer not null default 0")
     private Integer reserved = 0;
 
@@ -198,12 +197,10 @@ public class Product extends BaseTimeEntity {
 
     }
 
-    /** 가용재고. 이미 선점된 수량은 다른 결제가 쓸 수 없다. */
     public int getAvailableStock() {
         return this.stock - this.reserved;
     }
 
-    /** 결제 준비 단계의 선점. stock 은 건드리지 않는다. */
     public void reserve(Integer quantity) {
         if (quantity == null || quantity <= 0) {
             throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
@@ -214,7 +211,6 @@ public class Product extends BaseTimeEntity {
         this.reserved += quantity;
     }
 
-    /** 결제가 종결돼 더 쓰지 않는 선점을 되돌린다. stock 은 건드리지 않는다. */
     public void releaseReservation(Integer quantity) {
         if (quantity == null || quantity <= 0) {
             throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
@@ -225,7 +221,6 @@ public class Product extends BaseTimeEntity {
         this.reserved -= quantity;
     }
 
-    /** 승인이 끝난 선점을 실재고 차감으로 확정한다. 선점할 때 이미 확보했으므로 재고를 다시 검사하지 않는다. */
     public void confirmReservation(Integer quantity) {
         if (quantity == null || quantity <= 0) {
             throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);

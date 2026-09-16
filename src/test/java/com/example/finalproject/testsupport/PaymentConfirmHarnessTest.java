@@ -42,8 +42,6 @@ class PaymentConfirmHarnessTest extends IntegrationTestSupport {
         toss.stubCancelSuccess();
         email = "harness-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        // 시드가 돌려준 스토어를 그대로 쓴다 — findAll().findFirst() 는 다른 테스트가 만든
-        // 스토어를 집을 수 있고, 그러면 배달 거리 밖이라 prepare 가 실패한다.
         store = seeder.seedStoreWithProducts(1, 100);
     }
 

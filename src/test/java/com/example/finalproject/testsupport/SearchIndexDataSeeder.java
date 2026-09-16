@@ -52,8 +52,6 @@ public class SearchIndexDataSeeder {
     private void clearPreviousDataset() {
         jdbcTemplate.update("delete from store_business_hours where store_id in "
                 + "(select id from stores where store_name like ?)", STORE_PREFIX + "%");
-        // 같은 스키마를 쓰는 다른 테스트가 이 상품을 주문에 걸어두면 products 삭제가 FK 로 막힌다.
-        // 컨텍스트를 공유하면서 스키마 수명이 길어져 실제로 발생했다. 참조부터 끊는다.
         jdbcTemplate.update("delete from order_products where product_id in "
                 + "(select id from products where store_id in "
                 + "(select id from stores where store_name like ?))", STORE_PREFIX + "%");

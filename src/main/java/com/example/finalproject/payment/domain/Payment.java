@@ -161,13 +161,7 @@ public class Payment extends BaseTimeEntity {
         this.paymentStatus = PaymentStatus.REVERSAL_PENDING;
     }
 
-    /**
-     * 승인 기록이 남았는가. approve() 만 paidAt 을 채우고 지우지 않는다.
-     *
-     * <p>completeConfirm() 한 트랜잭션 안에서 confirmReservation → approve → markPaid 가
-     * 함께 일어나므로, 승인 기록이 있으면 선점은 이미 실재고 차감으로 확정됐고 주문도 PAID 다.
-     * 그 셋이 분리되면 이 추론은 성립하지 않는다.
-     */
+    /** PG 승인 반영 여부를 반환한다. */
     public boolean hasApprovalRecord() {
         return this.paidAt != null;
     }

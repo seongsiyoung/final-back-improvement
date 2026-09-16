@@ -102,7 +102,6 @@ class ReadyPaymentExpirationSchedulerTest extends IntegrationTestSupport {
         paymentConfirmCommandService.startConfirm(
                 buyerOf(prepared), prepared.getPaymentId(), "race-key-" + System.nanoTime());
 
-        // 스캔이 대상 목록을 만든 뒤 고객이 결제를 시작한 상황과 같다.
         paymentConfirmCommandService.expireReadyPayment(prepared.getPaymentId());
 
         assertThat(statusOf(prepared))
@@ -121,9 +120,6 @@ class ReadyPaymentExpirationSchedulerTest extends IntegrationTestSupport {
         CountDownLatch confirmHoldsLock = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            // 결제 시작을 커밋하지 않은 채 행 락을 잠시 쥐고 있게 한다. 그 사이에 만료가
-            // 들어와야 락의 효과를 잴 수 있다 — 커밋이 먼저 끝나면 상태 재확인만으로 통과해
-            // 락을 지워도 테스트가 녹색이 된다.
             Future<?> confirm = executor.submit(() -> transactionTemplate.executeWithoutResult(status -> {
                 paymentConfirmCommandService.startConfirm(
                         buyerOf(prepared), prepared.getPaymentId(), "hold-key-" + System.nanoTime());
@@ -158,7 +154,6 @@ class ReadyPaymentExpirationSchedulerTest extends IntegrationTestSupport {
         PostPaymentPrepareResponse succeeding = prepare(productId, 2);
         backdateCreatedAt(failing.getPaymentId(), 90);
         backdateCreatedAt(succeeding.getPaymentId(), 60);
-        // 반납이 상품을 찾지 못해 실패한다. 뒤에 오는 건과 상태를 공유하지 않는 실패 장치다.
         jdbcTemplate.update("update order_lines set product_id = ? where order_id = ?",
                 Long.MAX_VALUE, orderIdOf(failing));
 
@@ -234,7 +229,6 @@ class ReadyPaymentExpirationSchedulerTest extends IntegrationTestSupport {
         return product.getId();
     }
 
-    /** createdAt 은 JPA auditing 이 저장 시각으로 채우므로 JDBC 로 우회한다. */
     private void backdateCreatedAt(Long paymentId, int minutesAgo) {
         jdbcTemplate.update("update payments set created_at = now() - make_interval(mins => ?) where id = ?",
                 minutesAgo, paymentId);
