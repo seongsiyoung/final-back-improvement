@@ -32,7 +32,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.IllegalTransactionStateException;
 
-/** 승인 기록이 있는 결제와 없는 결제의 종결이 서로 다르게 다뤄지는지 고정한다. */
 class ApprovedPaymentTerminationTest extends IntegrationTestSupport {
 
     @Autowired private PaymentService paymentService;
@@ -45,8 +44,6 @@ class ApprovedPaymentTerminationTest extends IntegrationTestSupport {
     @Autowired private LoadTestDataSeeder seeder;
     @Autowired private JdbcTemplate jdbcTemplate;
 
-    // --- Task 2: 승인 기록이 있는 결제는 새 주문을 막지 않는다 ---
-
     @Test
     @DisplayName("승인 뒤 확인 필요가 된 결제는 새 주문을 막지 않는다")
     void approvedThenReconciliationRequired_doesNotBlockNewCheckout() {
@@ -54,7 +51,6 @@ class ApprovedPaymentTerminationTest extends IntegrationTestSupport {
         String buyer = newBuyer("approved-block");
         PostPaymentPrepareResponse first = paymentService.prepare(buyer, request(productId, 2));
         approve(buyer, first);
-        // 취소 거절이나 환불 반영 실패가 승인 완료 결제도 이 상태로 올린다.
         forceStatus(first.getPaymentId(), PaymentStatus.RECONCILIATION_REQUIRED);
 
         PostPaymentPrepareResponse second = paymentService.prepare(buyer, request(productId, 1));
@@ -71,13 +67,16 @@ class ApprovedPaymentTerminationTest extends IntegrationTestSupport {
     @ParameterizedTest
     @EnumSource(value = PaymentStatus.class,
             names = {"PENDING", "REVERSAL_PENDING", "RECONCILIATION_REQUIRED"})
-    @DisplayName("승인 전 미확정 결제는 여전히 새 주문을 막는다")
-    void unapprovedUnresolvedPayment_stillBlocksNewCheckout(PaymentStatus status) {
+    @DisplayName("승인 전 미확정 결제는 상한에 센다")
+    void unapprovedUnresolvedPayments_countTowardTheCap(PaymentStatus status) {
         Long productId = seedProduct(10);
-        String buyer = newBuyer("unapproved-block-" + status);
-        PostPaymentPrepareResponse first = paymentService.prepare(buyer, request(productId, 2));
-        paymentConfirmCommandService.startConfirm(buyer, first.getPaymentId(), "key-" + System.nanoTime());
-        forceStatus(first.getPaymentId(), status);
+        String buyer = newBuyer("unapproved-cap-" + status);
+        for (int i = 0; i < 3; i++) {
+            PostPaymentPrepareResponse prepared = paymentService.prepare(buyer, request(productId, 1));
+            paymentConfirmCommandService.startConfirm(
+                    buyer, prepared.getPaymentId(), "key-" + System.nanoTime());
+            forceStatus(prepared.getPaymentId(), status);
+        }
 
         assertThatThrownBy(() -> paymentService.prepare(buyer, request(productId, 1)))
                 .isInstanceOf(BusinessException.class)
@@ -85,7 +84,26 @@ class ApprovedPaymentTerminationTest extends IntegrationTestSupport {
                         .isEqualTo(ErrorCode.PAYMENT_IN_PROGRESS));
     }
 
-    // --- Task 3: 승인 기록이 있는 결제를 미청구로 종결할 수 없다 ---
+    @Test
+    @DisplayName("승인 뒤 확인 필요가 된 결제는 상한에 세지 않는다")
+    void approvedReconciliationRequiredPayments_doNotCountTowardTheCap() {
+        Long productId = seedProduct(10);
+        String buyer = newBuyer("approved-cap");
+        for (int i = 0; i < 3; i++) {
+            PostPaymentPrepareResponse prepared = paymentService.prepare(buyer, request(productId, 1));
+            approve(buyer, prepared);
+            forceStatus(prepared.getPaymentId(), PaymentStatus.RECONCILIATION_REQUIRED);
+        }
+
+        PostPaymentPrepareResponse next = paymentService.prepare(buyer, request(productId, 1));
+
+        assertThat(statusOf(next))
+                .as("돈을 낸 결제가 상한을 잡아먹으면 안 된다")
+                .isEqualTo(PaymentStatus.READY);
+        assertThat(reservedOf(productId))
+                .as("승인된 셋은 이미 실재고로 빠졌다. 새 선점 1만 남는다")
+                .isEqualTo(1);
+    }
 
     @Test
     @DisplayName("승인 기록이 있는 결제에 미청구 종결을 시도하면 거부된다")
@@ -124,8 +142,6 @@ class ApprovedPaymentTerminationTest extends IntegrationTestSupport {
         assertThat(reservedOf(productId)).isZero();
         assertThat(orderStatusOf(prepared)).isEqualTo(OrderStatus.CANCELLED.name());
     }
-
-    // --- Task 4: 결제가 종결되면 주문도 종결한다 ---
 
     @Test
     @DisplayName("결제 실패로 종결하면 주문도 종결된다")
@@ -225,7 +241,6 @@ class ApprovedPaymentTerminationTest extends IntegrationTestSupport {
         Long productId = seedProduct(10);
         String buyer = newBuyer("refunded-unapproved");
         PostPaymentPrepareResponse prepared = paymentService.prepare(buyer, request(productId, 2));
-        // PG 는 청구했는데 completeConfirm 이 롤백된 경우다. 승인 기록이 없고 선점은 살아 있다.
         paymentConfirmCommandService.startConfirm(buyer, prepared.getPaymentId(), "key-" + System.nanoTime());
         paymentConfirmCommandService.markReversalPending(prepared.getPaymentId());
         paymentConfirmCommandService.markConfirmReconciliationRequired(prepared.getPaymentId());

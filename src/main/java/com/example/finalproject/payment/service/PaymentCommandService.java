@@ -153,7 +153,7 @@ public class PaymentCommandService {
     }
 
     private Payment findPaymentWithLock(Long orderId) {
-        return paymentRepository.findWithLockByOrder_Id(orderId)
+        return paymentRepository.lockByOrderId(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
     }
 

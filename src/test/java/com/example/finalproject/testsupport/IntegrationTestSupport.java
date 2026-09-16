@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.test.context.ActiveProfiles;
@@ -61,6 +62,33 @@ public abstract class IntegrationTestSupport {
         if (circuitBreakerFactoryForIsolation instanceof Resilience4JCircuitBreakerFactory factory) {
             factory.getCircuitBreakerRegistry().getAllCircuitBreakers().forEach(CircuitBreaker::reset);
         }
+    }
+
+
+    /**
+     * 다른 스레드가 실제로 행 잠금 대기에 들어갈 때까지 기다린다.
+     *
+     * <p>sleep 으로 맞추면 느린 환경에서 대기 전에 앞 트랜잭션이 커밋해 두 호출이 순차 실행된다.
+     * 그러면 낡은 읽기가 아예 일어나지 않아 고치기 전 구현으로도 통과한다.
+     */
+    protected void awaitRowLockWaiter(JdbcTemplate jdbcTemplate) {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            Integer waiting = jdbcTemplate.queryForObject(
+                    "select count(*) from pg_locks "
+                            + "where not granted and locktype in ('transactionid', 'tuple')",
+                    Integer.class);
+            if (waiting != null && waiting > 0) {
+                return;
+            }
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+        }
+        throw new IllegalStateException("잠금 대기에 들어간 스레드가 없다");
     }
 
     @DynamicPropertySource

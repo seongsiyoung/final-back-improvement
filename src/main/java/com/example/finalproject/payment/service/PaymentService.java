@@ -48,11 +48,10 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PaymentService {
 
-    private static final EnumSet<PaymentStatus> ACTIVE_PAYMENT_STATUSES = EnumSet.of(
-            PaymentStatus.READY,
-            PaymentStatus.PENDING,
-            PaymentStatus.REVERSAL_PENDING,
-            PaymentStatus.RECONCILIATION_REQUIRED
+    /** 사용자별 승인 전 미확정 결제 상한. */
+    private static final int MAX_UNRESOLVED_PAYMENTS = 3;
+    private static final EnumSet<PaymentStatus> REPLACEABLE_PAYMENT_STATUSES = EnumSet.of(
+            PaymentStatus.READY
     );
     private static final EnumSet<PaymentStatus> UNRESOLVED_PAYMENT_STATUSES = EnumSet.of(
             PaymentStatus.PENDING,
@@ -80,7 +79,9 @@ public class PaymentService {
 
         User user = userLoader.loadUserByUsernameWithLock(email);
 
-        List<Payment> replaceable = loadReplaceablePaymentsOrBlock(user.getId());
+        List<Payment> replaceable = loadReplaceableReadyPayments(user.getId());
+
+        blockWhenUnresolvedPaymentsReachCap(user.getId());
 
         validateRequest(request);
 
@@ -108,37 +109,21 @@ public class PaymentService {
         );
     }
 
-    /**
-     * 대체 가능한 옛 READY 결제를 돌려준다. 미확정 결제가 하나라도 있으면 진행을 막는다.
-     *
-     * <p>승인 기록이 있는 결제는 판단에서 제외한다. 취소 거절이나 환불 반영 실패가 승인 완료
-     * 결제도 RECONCILIATION_REQUIRED 로 올리는데, 그 결제는 이미 끝났고 주문도 PAID 라
-     * 중복 청구 위험이 없다. 선점도 쥐고 있지 않으므로 "사용자당 활성 선점 하나"도 깨지지 않는다.
-     * 차단도 대체도 하지 않고 그대로 둔다 — 실패로 종결하면 돈을 받은 결제가 거짓이 된다.
-     *
-     * <p>조회는 좁히지 않는다. 비관적 락이 걸려 있어 대상을 줄이면 락 범위가 달라진다.
-     */
-    private List<Payment> loadReplaceablePaymentsOrBlock(Long userId) {
-        List<Payment> unconfirmed = paymentRepository.findByOrder_UserIdAndPaymentStatusIn(
-                        userId, ACTIVE_PAYMENT_STATUSES).stream()
-                .filter(payment -> !payment.hasApprovalRecord())
-                .toList();
+    private void blockWhenUnresolvedPaymentsReachCap(Long userId) {
+        long unresolved = paymentRepository.countByOrder_UserIdAndPaymentStatusInAndPaidAtIsNull(
+                userId, UNRESOLVED_PAYMENT_STATUSES);
 
-        if (unconfirmed.stream().anyMatch(payment ->
-                UNRESOLVED_PAYMENT_STATUSES.contains(payment.getPaymentStatus()))) {
+        if (unresolved >= MAX_UNRESOLVED_PAYMENTS) {
             throw new BusinessException(ErrorCode.PAYMENT_IN_PROGRESS);
         }
-
-        return unconfirmed;
     }
 
-    /**
-     * 이번 요청이 건드릴 상품을 **한 번에 productId 오름차순으로** 잠근다.
-     *
-     * <p>옛 READY 건의 반납과 새 요청의 선점을 따로 잠그면 각 구간만 정렬되고 전체로는
-     * 정렬되지 않는다. 두 사용자의 옛 주문과 새 요청이 서로 엇갈리면 그대로 데드락이 된다.
-     * 반납과 선점이 쓰는 상품을 합쳐 먼저 전부 잠그면 이후 순서는 문제가 되지 않는다.
-     */
+    private List<Payment> loadReplaceableReadyPayments(Long userId) {
+        return paymentRepository.lockByUserIdAndStatuses(
+                userId, REPLACEABLE_PAYMENT_STATUSES);
+    }
+
+    /** 기존 READY 반납과 신규 선점 대상 상품을 같은 순서로 잠근다. */
     private void lockCheckoutProducts(List<Payment> replaceable, PostPaymentPrepareRequest request) {
         Set<Long> productIds = new TreeSet<>(request.getProductQuantities().keySet());
 
@@ -279,13 +264,6 @@ public class PaymentService {
         }
     }
 
-    /**
-     * 상품을 잠그고 검증한 뒤 결제가 끝날 때까지 쓸 수량을 선점한다.
-     *
-     * <p>가용재고 검사와 선점이 같은 락 안에 있어야 두 요청이 같은 재고를 나눠 갖지 않는다.
-     * 잠그는 순서를 productId 오름차순으로 고정하는 것은, 장바구니 구성이 서로 반대인 두
-     * 요청이 상대의 락을 마주 기다리는 데드락을 막기 위해서다.
-     */
     private List<Product> lockValidateAndReserveProducts(PostPaymentPrepareRequest request) {
 
         Map<Long, Integer> quantities = request.getProductQuantities();
@@ -315,8 +293,6 @@ public class PaymentService {
                 throw new BusinessException(ErrorCode.INVALID_PRICE);
             }
 
-            // 가용재고를 확인하고 같은 락 안에서 선점한다. 재고 부족이면 여기서 끝나므로
-            // 승인이 끝난 뒤 재고가 모자라 주문이 실패하는 경로가 생기지 않는다.
             product.reserve(qty);
 
             products.add(product);

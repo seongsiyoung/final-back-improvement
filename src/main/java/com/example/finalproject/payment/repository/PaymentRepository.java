@@ -22,6 +22,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     long countByOrder_UserIdAndPaymentStatusIn(Long userId, Collection<PaymentStatus> paymentStatuses);
 
+    long countByOrder_UserIdAndPaymentStatusInAndPaidAtIsNull(
+            Long userId, Collection<PaymentStatus> paymentStatuses);
+
     List<Payment> findByOrder_IdIn(List<Long> orderIds);
 
     long countByPaymentStatusInAndPaidAtBetween(
@@ -50,15 +53,25 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Payment> findWithLockById(Long paymentId);
 
+    /** 파생 쿼리로 쓰면 orders 를 outer join 해 락이 붙지 않는다. FK 컬럼으로 직접 건다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    Optional<Payment> findWithLockByOrder_Id(Long orderId);
+    @Query("select p from Payment p where p.order.id = :orderId")
+    Optional<Payment> lockByOrderId(@Param("orderId") Long orderId);
 
+    /**
+     * 조인 대신 서브쿼리를 쓴다. 조인하면 잠금이 payments 와 orders 에 함께 걸리고,
+     * 파생 쿼리로 쓰면 outer join 이 생겨 잠금이 아예 붙지 않는다.
+     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    List<Payment> findByOrder_UserIdAndPaymentStatusIn(Long userId, Collection<PaymentStatus> paymentStatuses);
+    @Query("select p from Payment p "
+            + "where p.order.id in (select o.id from Order o where o.user.id = :userId) "
+            + "and p.paymentStatus in :statuses")
+    List<Payment> lockByUserIdAndStatuses(
+            @Param("userId") Long userId,
+            @Param("statuses") Collection<PaymentStatus> statuses);
 
     Optional<Payment> findByPgOrderId(String pgOrderId);
 
-    /** 재조정 대상. 아직 조회하지 않은 것부터, 이후에는 가장 오래 전에 조회한 것부터 가져온다. */
     @Query("SELECT p FROM Payment p "
             + "WHERE p.paymentStatus IN (:statuses) "
             + "AND p.updatedAt < :threshold "
@@ -68,12 +81,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
 
-    /**
-     * 결제창을 열어두고 떠난 준비 결제. 선점을 쥔 채 방치된 건을 찾는다.
-     *
-     * <p>시간 기준이 updatedAt 이 아니라 createdAt 이다. READY 는 만들어진 뒤 바뀌지 않으므로
-     * 두 값이 같지만, "준비한 지 얼마나 됐나"가 판단 근거라는 것을 쿼리에 남긴다.
-     */
     @Query("SELECT p FROM Payment p "
             + "WHERE p.paymentStatus = :status "
             + "AND p.createdAt < :threshold "

@@ -17,6 +17,7 @@ import com.example.finalproject.testsupport.LoadTestDataSeeder;
 import com.example.finalproject.user.domain.User;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -36,16 +37,46 @@ class PaymentPrepareActivePaymentTest extends IntegrationTestSupport {
     @ParameterizedTest
     @EnumSource(value = PaymentStatus.class,
             names = {"PENDING", "REVERSAL_PENDING", "RECONCILIATION_REQUIRED"})
-    void prepare_whenUserHasUnresolvedPayment_throwsInProgress(PaymentStatus activeStatus) {
+    @DisplayName("멈춘 결제 한 건은 새 주문을 막지 않고 자기 선점만 붙잡는다")
+    void prepare_whenUserHasOneUnresolvedPayment_createsNewPayment(PaymentStatus activeStatus) {
         CheckoutFixture fixture = prepareCheckout("active-" + activeStatus + "-" + System.nanoTime());
         makeActive(fixture, activeStatus);
+
+        PostPaymentPrepareResponse next = paymentService.prepare(fixture.email(), fixture.request());
+
+        assertThat(statusOf(next)).isEqualTo(PaymentStatus.READY);
+        assertThat(statusOf(fixture.response()))
+                .as("멈춘 결제는 새 준비가 건드리지 않는다")
+                .isEqualTo(activeStatus);
+        assertThat(reservedOf(fixture.productId()))
+                .as("옛 선점이 반납되지 않은 채 새 선점이 더해진다")
+                .isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("멈춘 결제가 상한에 닿으면 새 주문을 막는다")
+    void prepare_whenUnresolvedPaymentsReachCap_throwsInProgress() {
+        CheckoutFixture fixture = prepareCheckout("cap-" + System.nanoTime());
+        makeActive(fixture, PaymentStatus.PENDING);
+        for (int i = 0; i < 2; i++) {
+            PostPaymentPrepareResponse extra =
+                    paymentService.prepare(fixture.email(), fixture.request());
+            paymentConfirmCommandService.startConfirm(
+                    fixture.email(), extra.getPaymentId(), "payment-key-" + System.nanoTime());
+        }
+
+        assertThat(reservedOf(fixture.productId()))
+                .as("상한까지는 통과하고 선점이 누적된다")
+                .isEqualTo(3);
 
         assertThatThrownBy(() -> paymentService.prepare(fixture.email(), fixture.request()))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(error -> assertThat(((BusinessException) error).getErrorCode().getCode())
                         .isEqualTo("PAYMENT-009"));
 
-        assertThat(statusOf(fixture.response())).isEqualTo(activeStatus);
+        assertThat(reservedOf(fixture.productId()))
+                .as("막힌 요청은 선점을 남기지 않는다")
+                .isEqualTo(3);
     }
 
     @Test
@@ -63,13 +94,17 @@ class PaymentPrepareActivePaymentTest extends IntegrationTestSupport {
     }
 
     @Test
-    void prepare_whenAnotherUserHasUnresolvedPayment_createsNewPayment() {
-        CheckoutFixture blockedUser = prepareCheckout("blocked-user-" + System.nanoTime());
-        makeActive(blockedUser, PaymentStatus.PENDING);
-        CheckoutFixture otherUser = prepareCheckout("other-user-" + System.nanoTime());
+    @DisplayName("교체는 요청한 사용자의 결제만 건드린다")
+    void prepare_doesNotTouchAnotherUsersReadyPayment() {
+        CheckoutFixture other = prepareCheckout("other-user-" + System.nanoTime());
+        CheckoutFixture mine = prepareCheckout("my-user-" + System.nanoTime());
 
-        assertThat(statusOf(otherUser.response())).isEqualTo(PaymentStatus.READY);
-        assertThat(statusOf(blockedUser.response())).isEqualTo(PaymentStatus.PENDING);
+        paymentService.prepare(mine.email(), mine.request());
+
+        assertThat(statusOf(other.response()))
+                .as("남의 READY 를 FAILED 로 닫으면 그 주문이 취소되고 선점도 풀린다")
+                .isEqualTo(PaymentStatus.READY);
+        assertThat(reservedOf(other.productId())).isEqualTo(1);
     }
 
     @Test
@@ -89,22 +124,23 @@ class PaymentPrepareActivePaymentTest extends IntegrationTestSupport {
     }
 
     @Test
-    void prepare_whenHistoricalReadyAndUnresolvedPaymentsExist_blocksWithoutReplacingReadyPayment() {
+    @DisplayName("READY 와 멈춘 결제가 함께 있으면 READY 만 교체한다")
+    void prepare_whenReadyAndUnresolvedPaymentsExist_replacesOnlyTheReadyPayment() {
         CheckoutFixture pending = prepareCheckout("mixed-active-" + System.nanoTime());
         makeActive(pending, PaymentStatus.PENDING);
-        jdbcTemplate.update("update payments set payment_status = ? where id = ?",
-                PaymentStatus.FAILED.name(), pending.response().getPaymentId());
         PostPaymentPrepareResponse ready = paymentService.prepare(pending.email(), pending.request());
-        jdbcTemplate.update("update payments set payment_status = ? where id = ?",
-                PaymentStatus.PENDING.name(), pending.response().getPaymentId());
 
-        assertThatThrownBy(() -> paymentService.prepare(pending.email(), pending.request()))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(error -> assertThat(((BusinessException) error).getErrorCode().getCode())
-                        .isEqualTo("PAYMENT-009"));
+        PostPaymentPrepareResponse replacement =
+                paymentService.prepare(pending.email(), pending.request());
 
-        assertThat(statusOf(pending.response())).isEqualTo(PaymentStatus.PENDING);
-        assertThat(statusOf(ready)).isEqualTo(PaymentStatus.READY);
+        assertThat(statusOf(pending.response()))
+                .as("멈춘 결제는 교체 대상이 아니다")
+                .isEqualTo(PaymentStatus.PENDING);
+        assertThat(statusOf(ready)).isEqualTo(PaymentStatus.FAILED);
+        assertThat(statusOf(replacement)).isEqualTo(PaymentStatus.READY);
+        assertThat(reservedOf(pending.productId()))
+                .as("멈춘 결제 1 + 새 READY 1. 교체된 READY 의 선점은 반납됐다")
+                .isEqualTo(2);
     }
 
     private CheckoutFixture prepareCheckout(String prefix) {
@@ -115,7 +151,7 @@ class PaymentPrepareActivePaymentTest extends IntegrationTestSupport {
                 .getContent().get(0);
         PostPaymentPrepareRequest request = prepareRequest(product.getId());
         PostPaymentPrepareResponse response = paymentService.prepare(email, request);
-        return new CheckoutFixture(email, user.getId(), request, response);
+        return new CheckoutFixture(email, user.getId(), product.getId(), request, response);
     }
 
     private PostPaymentPrepareRequest prepareRequest(Long productId) {
@@ -140,7 +176,12 @@ class PaymentPrepareActivePaymentTest extends IntegrationTestSupport {
         return paymentRepository.findById(response.getPaymentId()).orElseThrow().getPaymentStatus();
     }
 
-    private record CheckoutFixture(String email, Long userId, PostPaymentPrepareRequest request,
+    private int reservedOf(Long productId) {
+        return productRepository.findById(productId).orElseThrow().getReserved();
+    }
+
+    private record CheckoutFixture(String email, Long userId, Long productId,
+                                   PostPaymentPrepareRequest request,
                                    PostPaymentPrepareResponse response) {
     }
 }
