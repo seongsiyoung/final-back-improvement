@@ -18,18 +18,14 @@ import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import com.example.finalproject.user.domain.User;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -43,13 +39,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
+    private static final String OWNER_EMAIL = "recon-scheduler-owner@test.com";
 
     @Autowired
     private PendingPaymentReconciliationScheduler scheduler;
@@ -76,18 +66,23 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
     @BeforeEach
     void setUp() {
         user = seeder.seedUserWithAddress("scheduler-" + System.nanoTime() + "@test.com", "password1234!");
-        Store store = seeder.seedStoreWithProducts(1, 100);
+        Store store = seeder.seedStoreWithProducts(
+                OWNER_EMAIL, 1, 100);
         product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0);
     }
 
-    /**
-     * 서버가 죽어 completeConfirm()이 아예 실행되지 못한 상황을 재현한다 — PaymentService/
-     * PaymentConfirmCommandService의 어떤 보상 로직도 거치지 않고 저장소에 PENDING 결제를
-     * 주문 라인(OrderLine)까지 갖춘 채로 직접 심는다. quantity가 completeConfirm()의 재고
-     * 차감·StoreOrder 생성 로직을 실제로 태우는 데 필요하다.
-     */
+    /** 후처리 전 중단된 PENDING 결제를 만든다. */
     private Payment seedStuckPayment(int quantity) {
+        return seedStuckPayment(quantity, product.getId(), true);
+    }
+
+    /** 후처리가 실패하는 PENDING 결제를 만든다. */
+    private Payment seedStuckPaymentWithUnknownProduct() {
+        return seedStuckPayment(1, Long.MAX_VALUE, false);
+    }
+
+    private Payment seedStuckPayment(int quantity, Long lineProductId, boolean reserveStock) {
         Order order = orderRepository.save(Order.builder()
                 .orderNumber("ORD-STUCK-" + System.nanoTime())
                 .user(user)
@@ -101,12 +96,18 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
         orderLineRepository.save(OrderLine.builder()
                 .order(order)
-                .productId(product.getId())
+                .productId(lineProductId)
                 .storeId(product.getStore().getId())
                 .priceSnapshot(product.getEffectivePrice())
                 .productNameSnapshot(product.getProductName())
                 .quantity(quantity)
                 .build());
+
+        if (reserveStock) {
+            Product reservedProduct = productRepository.findById(product.getId()).orElseThrow();
+            reservedProduct.reserve(quantity);
+            productRepository.save(reservedProduct);
+        }
 
         return paymentRepository.save(Payment.builder()
                 .order(order)
@@ -168,9 +169,7 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
     @Test
     void reconcileStalePendingPayments_whenOnePaymentFails_stillProcessesTheOthers() {
-        // A: 재고보다 훨씬 많은 수량을 주문해 completeConfirm() 안에서 INSUFFICIENT_STOCK으로 실패한다.
-        Payment failingPayment = seedStuckPayment(product.getStock() + 1000);
-        // B: 정상적으로 완결되어야 한다.
+        Payment failingPayment = seedStuckPaymentWithUnknownProduct();
         Payment succeedingPayment = seedStuckPayment(1);
         backdateUpdatedAt(failingPayment.getId(), LocalDateTime.now().minusMinutes(10));
         backdateUpdatedAt(succeedingPayment.getId(), LocalDateTime.now().minusMinutes(10));
@@ -186,5 +185,20 @@ class PendingPaymentReconciliationSchedulerTest extends IntegrationTestSupport {
 
         Payment succeededAfter = paymentRepository.findById(succeedingPayment.getId()).orElseThrow();
         assertThat(succeededAfter.getPaymentStatus()).isEqualTo(PaymentStatus.APPROVED);
+    }
+
+    @Test
+    void reconcileStalePendingPayments_whenPgResultIsUnresolved_recordsAttemptWithoutChangingState() {
+        Payment payment = seedStuckPayment(1);
+        backdateUpdatedAt(payment.getId(), LocalDateTime.now().minusMinutes(10));
+        toss.stubGetPaymentByOrderIdStatus(payment.getPgOrderId(), "IN_PROGRESS");
+
+        scheduler.reconcileStalePayments();
+        entityManager.clear();
+
+        Payment after = paymentRepository.findById(payment.getId()).orElseThrow();
+        assertThat(after.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(after.getLastReconciledAt()).isNotNull();
+        assertThat(after.getReconcileAttempts()).isEqualTo(1);
     }
 }

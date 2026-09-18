@@ -5,6 +5,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.finalproject.payment.domain.SubscriptionPayment;
+import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.service.SubscriptionChargeBlockedException;
 import com.example.finalproject.payment.service.SubscriptionBillingService;
 import com.example.finalproject.subscription.repository.SubscriptionRepository;
 import org.junit.jupiter.api.Test;
@@ -53,6 +55,30 @@ class SubscriptionRecurringProcessorTest {
                 () -> processor.processSingleSubscription(1L));
 
         // 결제는 이미 성공했으므로, 후처리 실패를 결제 실패로 잘못 기록하면 안 된다.
+        verify(commandService, org.mockito.Mockito.never()).markPaymentFailed(1L);
+    }
+
+    @Test
+    void processSingleSubscription_whenApprovedPaymentBlockedCharge_advancesSchedule() {
+        when(subscriptionRepository.existsById(1L)).thenReturn(true);
+        when(subscriptionBillingService.chargeMonthlyFee(1L))
+                .thenThrow(new SubscriptionChargeBlockedException(PaymentStatus.APPROVED));
+
+        processor.processSingleSubscription(1L);
+
+        verify(commandService).advanceAfterSuccessfulCharge(1L);
+        verify(commandService, org.mockito.Mockito.never()).markPaymentFailed(1L);
+    }
+
+    @Test
+    void processSingleSubscription_whenReconciliationIsInProgress_skipsWithoutMarkingFailed() {
+        when(subscriptionRepository.existsById(1L)).thenReturn(true);
+        when(subscriptionBillingService.chargeMonthlyFee(1L))
+                .thenThrow(new SubscriptionChargeBlockedException(PaymentStatus.REVERSAL_PENDING));
+
+        processor.processSingleSubscription(1L);
+
+        verify(commandService, org.mockito.Mockito.never()).advanceAfterSuccessfulCharge(1L);
         verify(commandService, org.mockito.Mockito.never()).markPaymentFailed(1L);
     }
 }

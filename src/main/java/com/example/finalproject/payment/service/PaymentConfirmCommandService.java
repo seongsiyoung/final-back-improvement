@@ -15,6 +15,8 @@ import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.dto.request.TossConfirmRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.PaymentResolutionOutcome;
+import com.example.finalproject.payment.event.PaymentResolvedEvent;
 import com.example.finalproject.payment.event.StoreOrderCreatedEvent;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
@@ -24,6 +26,7 @@ import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.store.repository.StoreRepository;
 import com.example.finalproject.user.domain.User;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -41,6 +44,7 @@ public class PaymentConfirmCommandService {
     private final PaymentRepository paymentRepository;
     private final OrderLineRepository orderLineRepository;
     private final ProductRepository productRepository;
+    private final TerminatedPaymentCleanupService terminatedPaymentCleanupService;
     private final DeliveryFeeService deliveryFeeService;
     private final StoreOrderRepository storeOrderRepository;
     private final StoreRepository storeRepository;
@@ -81,15 +85,14 @@ public class PaymentConfirmCommandService {
         Order order = payment.getOrder();
         List<OrderLine> lines = orderLineRepository.findAllByOrderId(order.getId());
 
+        // 상품 잠금 순서를 선점·반납 경로와 맞춘다.
+        lines = lines.stream().sorted(Comparator.comparing(OrderLine::getProductId)).toList();
+
         for (OrderLine line : lines) {
             Product product = productRepository.findByIdForUpdate(line.getProductId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
 
-            if (product.getStock() < line.getQuantity()) {
-                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
-            }
-
-            product.decreaseStock(line.getQuantity());
+            product.confirmReservation(line.getQuantity());
         }
 
         List<StoreOrder> storeOrders = createStoreOrdersAndOrderProducts(order, lines);
@@ -110,6 +113,7 @@ public class PaymentConfirmCommandService {
         );
 
         order.markPaid();
+        publishPaymentResolved(payment, PaymentResolutionOutcome.APPROVED);
 
         return new PostPaymentConfirmResponse(
                 order.getId(),
@@ -137,6 +141,8 @@ public class PaymentConfirmCommandService {
 
         if (payment.getPaymentStatus() == PaymentStatus.PENDING) {
             payment.fail();
+            terminatedPaymentCleanupService.cleanUp(payment);
+            publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
     }
 
@@ -146,7 +152,24 @@ public class PaymentConfirmCommandService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
         if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
             payment.fail();
+            terminatedPaymentCleanupService.cleanUp(payment);
+            publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
         }
+    }
+
+    /** READY 상태를 잠금 재확인한 뒤 결제와 선점을 종결한다. */
+    @Transactional
+    public void expireReadyPayment(Long paymentId) {
+        Payment payment = paymentRepository.findWithLockById(paymentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+
+        if (payment.getPaymentStatus() != PaymentStatus.READY) {
+            return;
+        }
+
+        payment.fail();
+        terminatedPaymentCleanupService.cleanUp(payment);
+        publishPaymentResolved(payment, PaymentResolutionOutcome.FAILED);
     }
 
     @Transactional
@@ -162,7 +185,8 @@ public class PaymentConfirmCommandService {
     public void markConfirmReconciliationRequired(Long paymentId) {
         Payment payment = paymentRepository.findWithLockById(paymentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
-        if (payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
+        if (payment.getPaymentStatus() == PaymentStatus.PENDING
+                || payment.getPaymentStatus() == PaymentStatus.REVERSAL_PENDING) {
             payment.markReconciliationRequired();
         }
     }
@@ -228,6 +252,11 @@ public class PaymentConfirmCommandService {
         }
 
         return createdStoreOrders;
+    }
+
+    private void publishPaymentResolved(Payment payment, PaymentResolutionOutcome outcome) {
+        applicationEventPublisher.publishEvent(new PaymentResolvedEvent(
+                payment.getId(), payment.getOrder().getUser().getId(), outcome));
     }
 
 }

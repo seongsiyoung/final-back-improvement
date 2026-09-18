@@ -144,7 +144,7 @@
 `ProductService`
 
 ### 주문
-`CartService` · `OrderCreateService` · `OrderQueryService`
+`CartService` · `OrderQueryService`
 `StoreOrderService` · `StoreOrderStatusService` · `StoreOrderCancelService`
 `StoreOrderTtlService` · `StoreOrderAutoReadyService` · `StoreOrderAutoRejectService`
 `CheckoutService` · `DefaultPriceCalculator`

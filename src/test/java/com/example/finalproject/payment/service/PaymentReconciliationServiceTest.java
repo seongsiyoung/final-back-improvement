@@ -22,20 +22,27 @@ import java.util.Collections;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class PaymentReconciliationServiceTest {
 
     private TossPaymentsClient tossPaymentsClient;
     private PaymentConfirmCommandService paymentConfirmCommandService;
+    private ReconciliationAttemptCommandService reconciliationAttemptCommandService;
+    private ReversalResendService reversalResendService;
     private PaymentReconciliationService paymentReconciliationService;
 
     @BeforeEach
     void setUp() {
         tossPaymentsClient = mock(TossPaymentsClient.class);
         paymentConfirmCommandService = mock(PaymentConfirmCommandService.class);
+        reconciliationAttemptCommandService = mock(ReconciliationAttemptCommandService.class);
+        reversalResendService = mock(ReversalResendService.class);
         paymentReconciliationService = new PaymentReconciliationService(
-                tossPaymentsClient, paymentConfirmCommandService);
+                tossPaymentsClient, paymentConfirmCommandService, reconciliationAttemptCommandService,
+                reversalResendService);
     }
 
     private Payment pendingPayment(Long id, String pgOrderId) {
@@ -74,15 +81,54 @@ class PaymentReconciliationServiceTest {
         verify(paymentConfirmCommandService, never()).failPending(any());
     }
 
-    @Test
-    void reconcile_whenPgStatusNotDone_callsFailPending() {
+    @ParameterizedTest
+    @ValueSource(strings = {"ABORTED", "CANCELED", "EXPIRED"})
+    void reconcile_whenPgStatusIsTerminalFailure_callsFailPending(String status) {
         Payment payment = pendingPayment(2L, "order-2");
-        TossConfirmResponse pg = responseWithStatus("ABORTED");
+        TossConfirmResponse pg = responseWithStatus(status);
         when(tossPaymentsClient.getPaymentByOrderId("order-2")).thenReturn(pg);
 
         paymentReconciliationService.reconcile(payment);
 
         verify(paymentConfirmCommandService).failPending(2L);
+        verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"IN_PROGRESS", "WAITING_FOR_DEPOSIT", "NEW_STATUS"})
+    void reconcile_whenPgStatusIsNotTerminal_keepsPending(String status) {
+        Payment payment = pendingPayment(21L, "order-21");
+        when(tossPaymentsClient.getPaymentByOrderId("order-21"))
+                .thenReturn(responseWithStatus(status));
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(paymentConfirmCommandService, never()).failPending(any());
+        verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
+    }
+
+    @Test
+    void reconcile_whenPgStatusIsMissing_keepsPending() {
+        Payment payment = pendingPayment(22L, "order-22");
+        when(tossPaymentsClient.getPaymentByOrderId("order-22"))
+                .thenReturn(responseWithStatus(null));
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(paymentConfirmCommandService, never()).failPending(any());
+        verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
+    }
+
+    @Test
+    void reconcile_whenPgStatusIsPartiallyCanceled_marksReconciliationRequired() {
+        Payment payment = pendingPayment(23L, "order-23");
+        when(tossPaymentsClient.getPaymentByOrderId("order-23"))
+                .thenReturn(responseWithStatus("PARTIAL_CANCELED"));
+
+        paymentReconciliationService.reconcile(payment);
+
+        verify(paymentConfirmCommandService).markConfirmReconciliationRequired(23L);
+        verify(paymentConfirmCommandService, never()).failPending(any());
         verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
     }
 
@@ -154,12 +200,13 @@ class PaymentReconciliationServiceTest {
     }
 
     @Test
-    void reconcile_reversalPendingAndDone_doesNotCompleteConfirm() {
+    void reconcile_reversalPendingAndDone_resendsCancel() {
         Payment payment = reversalPendingPayment(7L, "order-7");
         when(tossPaymentsClient.getPaymentByOrderId("order-7")).thenReturn(responseWithStatus("DONE"));
 
         paymentReconciliationService.reconcile(payment);
 
+        verify(reversalResendService).resend(7L, "test-payment-key", payment.getAmount());
         verify(paymentConfirmCommandService, never()).completeConfirm(any(), any(), any());
         verify(paymentConfirmCommandService, never()).failReversalPending(any());
     }

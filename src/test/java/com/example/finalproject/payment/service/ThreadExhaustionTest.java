@@ -9,12 +9,10 @@ import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
 import com.example.finalproject.payment.dto.request.PostPaymentPrepareRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentPrepareResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
-import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.domain.Pageable;
@@ -57,16 +54,13 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
     private static final int CONCURRENT_CONFIRMS = 15;
     private static final int TOMCAT_MAX_THREADS = 8;
 
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
     @DynamicPropertySource
     static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
         // 이 테스트에만 적용 — application-test.yml(전역)을 건드리면 다른 통합 테스트의
         // 톰캣 워커 수까지 줄어들어 영향 범위가 필요 이상으로 넓어진다.
         registry.add("server.tomcat.threads.max", () -> TOMCAT_MAX_THREADS);
         registry.add("server.tomcat.threads.min-spare", () -> TOMCAT_MAX_THREADS);
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> TOMCAT_MAX_THREADS * 2);
     }
 
     @Autowired
@@ -76,14 +70,19 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
     @Autowired
     private ProductRepository productRepository;
 
-    private String accessToken;
     private Long productId;
 
     @BeforeEach
     void setUp() {
+        Store store = seeder.seedStoreWithProducts(1, 1000);
+
+        productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
+                .getContent().get(0).getId();
+    }
+
+    private String newCustomerToken() {
         String email = "exhaustion-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        seeder.seedStoreWithProducts(1, 1000);
 
         LoginRequest loginRequest = new LoginRequest();
         ReflectionTestUtils.setField(loginRequest, "email", email);
@@ -91,14 +90,10 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
         ResponseEntity<ApiResponse<LoginResponse>> loginResponse = restTemplate.exchange(
                 "/api/auth/login", HttpMethod.POST, new HttpEntity<>(loginRequest),
                 new org.springframework.core.ParameterizedTypeReference<>() {});
-        accessToken = loginResponse.getBody().getData().getAccessToken();
-
-        Store store = productRepository.findAll().stream().map(Product::getStore).findFirst().orElseThrow();
-        productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
-                .getContent().get(0).getId();
+        return loginResponse.getBody().getData().getAccessToken();
     }
 
-    private Long prepareNewPayment() {
+    private Long prepareNewPayment(String accessToken) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         PostPaymentPrepareRequest prepareRequest = new PostPaymentPrepareRequest();
@@ -111,7 +106,7 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
         return prepareResponse.getBody().getData().getPaymentId();
     }
 
-    private void callConfirm(Long paymentId) {
+    private void callConfirm(String accessToken, Long paymentId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         PostPaymentConfirmRequest confirmRequest = new PostPaymentConfirmRequest();
@@ -131,15 +126,19 @@ class ThreadExhaustionTest extends IntegrationTestSupport {
     void unrelatedApi_staysResponsive_whileTossConfirmIsSlow() throws Exception {
         toss.stubConfirmWithDelay(Duration.ofSeconds(2));
 
-        List<Long> paymentIds = IntStream.range(0, CONCURRENT_CONFIRMS)
-                .mapToObj(i -> prepareNewPayment())
+        record Confirmable(String accessToken, Long paymentId) {}
+        List<Confirmable> targets = IntStream.range(0, CONCURRENT_CONFIRMS)
+                .mapToObj(i -> {
+                    String token = newCustomerToken();
+                    return new Confirmable(token, prepareNewPayment(token));
+                })
                 .toList();
 
         ExecutorService pool = Executors.newFixedThreadPool(CONCURRENT_CONFIRMS);
         try {
             List<Future<?>> confirmCalls = new ArrayList<>();
-            for (Long paymentId : paymentIds) {
-                confirmCalls.add(pool.submit(() -> callConfirm(paymentId)));
+            for (Confirmable target : targets) {
+                confirmCalls.add(pool.submit(() -> callConfirm(target.accessToken(), target.paymentId())));
             }
 
             // confirm 15건이 톰캣 커넥터 큐에 전부 접수될 시간을 준다 — categories가 반드시

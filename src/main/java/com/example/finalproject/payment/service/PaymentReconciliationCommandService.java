@@ -5,7 +5,9 @@ import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.payment.domain.Payment;
 import com.example.finalproject.payment.domain.SubscriptionPayment;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.PaymentResolutionOutcome;
 import com.example.finalproject.payment.enums.ReconciliationOutcome;
+import com.example.finalproject.payment.event.PaymentResolvedEvent;
 import com.example.finalproject.payment.repository.PaymentRepository;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
@@ -13,6 +15,7 @@ import com.example.finalproject.subscription.domain.Subscription;
 import com.example.finalproject.subscription.enums.SubscriptionStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +27,8 @@ public class PaymentReconciliationCommandService {
     private final PaymentRepository paymentRepository;
     private final PaymentRefundRepository paymentRefundRepository;
     private final SubscriptionPaymentRepository subscriptionPaymentRepository;
+    private final ApplicationEventPublisher applicationEventPublisher;
+    private final TerminatedPaymentCleanupService terminatedPaymentCleanupService;
 
     @Transactional
     public void resolvePayment(Long paymentId, ReconciliationOutcome outcome, Integer confirmedAmount) {
@@ -37,7 +42,13 @@ public class PaymentReconciliationCommandService {
             throw new BusinessException(ErrorCode.INVALID_PAYMENT_CANCEL_STATUS);
         }
         if (outcome == ReconciliationOutcome.NOT_CHARGED) {
+            // 승인 기록이 있으면 미청구로 종결할 수 없다.
+            if (payment.hasApprovalRecord()) {
+                throw new BusinessException(ErrorCode.APPROVED_PAYMENT_CANNOT_BE_NOT_CHARGED);
+            }
             payment.fail();
+            terminatedPaymentCleanupService.cleanUp(payment);
+            publishPaymentFailed(payment);
             return;
         }
         if (outcome == ReconciliationOutcome.REFUNDED) {
@@ -45,6 +56,8 @@ public class PaymentReconciliationCommandService {
                 throw new BusinessException(ErrorCode.INVALID_REFUND_AMOUNT);
             }
             payment.resolveReconciliationAsRefunded(confirmedAmount);
+            terminatedPaymentCleanupService.cleanUp(payment);
+            publishPaymentFailed(payment);
             return;
         }
         throw new BusinessException(ErrorCode.INVALID_PAYMENT_CANCEL_STATUS);
@@ -69,5 +82,10 @@ public class PaymentReconciliationCommandService {
         }
         subscription.activate();
         subscription.resetFailCount();
+    }
+
+    private void publishPaymentFailed(Payment payment) {
+        applicationEventPublisher.publishEvent(new PaymentResolvedEvent(
+                payment.getId(), payment.getOrder().getUser().getId(), PaymentResolutionOutcome.FAILED));
     }
 }

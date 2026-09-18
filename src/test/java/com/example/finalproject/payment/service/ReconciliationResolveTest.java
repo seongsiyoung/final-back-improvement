@@ -9,7 +9,9 @@ import com.example.finalproject.global.exception.custom.ErrorCode;
 import com.example.finalproject.order.enums.StoreOrderStatus;
 import com.example.finalproject.payment.domain.PaymentRefund;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.enums.PaymentResolutionOutcome;
 import com.example.finalproject.payment.enums.ReconciliationOutcome;
+import com.example.finalproject.payment.event.PaymentResolvedEvent;
 import com.example.finalproject.payment.enums.RefundStatus;
 import com.example.finalproject.payment.repository.PaymentRefundRepository;
 import com.example.finalproject.payment.repository.PaymentRepository;
@@ -27,7 +29,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 
+@RecordApplicationEvents
 class ReconciliationResolveTest extends IntegrationTestSupport {
 
     @Autowired private AdminRefundCommandService adminRefundCommandService;
@@ -41,6 +46,20 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
     @Autowired private SubscriptionPaymentRepository subscriptionPaymentRepository;
     @Autowired private SubscriptionRepository subscriptionRepository;
     @Autowired private SubscriptionScenarioSeeder subscriptionScenarioSeeder;
+    @Autowired private ApplicationEvents applicationEvents;
+
+    @Test
+    @DisplayName("승인 여부가 모순된 PENDING 결제는 확인 필요로 올린다")
+    void markConfirmReconciliationRequired_marksPendingPayment() {
+        String email = newBuyerEmail();
+        Long paymentId = refundScenarioSeeder.readyPayment(email).paymentId();
+        paymentConfirmCommandService.startConfirm(email, paymentId, "pending-reconciliation-key");
+
+        paymentConfirmCommandService.markConfirmReconciliationRequired(paymentId);
+
+        assertThat(paymentRepository.findById(paymentId).orElseThrow().getPaymentStatus())
+                .isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
+    }
 
     @Test
     @DisplayName("환불이 확인되면 장부에 반영하고 활성 건에서 뺀다")
@@ -147,6 +166,11 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
 
         assertThat(paymentRepository.findById(paymentId).orElseThrow().getPaymentStatus())
                 .isEqualTo(PaymentStatus.FAILED);
+        assertThat(applicationEvents.stream(PaymentResolvedEvent.class)
+                .filter(event -> event.paymentId().equals(paymentId))
+                .toList())
+                .extracting(PaymentResolvedEvent::paymentId, PaymentResolvedEvent::outcome)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(paymentId, PaymentResolutionOutcome.FAILED));
     }
 
     @Test
@@ -169,6 +193,11 @@ class ReconciliationResolveTest extends IntegrationTestSupport {
         assertThat(paymentRepository.findById(paymentId).orElseThrow())
                 .extracting(payment -> payment.getPaymentStatus(), payment -> payment.getRefundedAmount())
                 .containsExactly(PaymentStatus.PARTIAL_REFUNDED, 1000);
+        assertThat(applicationEvents.stream(PaymentResolvedEvent.class)
+                .filter(event -> event.paymentId().equals(paymentId))
+                .toList())
+                .extracting(PaymentResolvedEvent::paymentId, PaymentResolvedEvent::outcome)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(paymentId, PaymentResolutionOutcome.FAILED));
     }
 
     @ParameterizedTest

@@ -86,7 +86,7 @@ public class ProductService {
     public GetProductResponse getProduct(Long productId) {
         Product product = findActiveProduct(productId);
 
-        return GetProductResponse.from(product);
+        return GetProductResponse.forCustomer(product);
     }
 
     /**
@@ -102,7 +102,7 @@ public class ProductService {
         Sort order = toSort(effectiveSort);
         Pageable pageable = PageRequest.of(0, 1000, order);
         List<Product> products = productRepository.findByStore_IdAndDeletedAtIsNullAndIsActiveTrue(storeId, pageable);
-        return products.stream().map(GetProductResponse::from).toList();
+        return products.stream().map(GetProductResponse::forCustomer).toList();
     }
 
     private static Sort toSort(ProductSortType sortType) {
@@ -161,7 +161,7 @@ public class ProductService {
 
         log.info("상품 수정 완료. productId={}", productId);
 
-        return GetProductResponse.from(product);
+        return GetProductResponse.forOwner(product);
     }
 
     public void deleteProduct(String userName, Long productId) {
@@ -193,7 +193,7 @@ public class ProductService {
 
         log.info("상품 활성화 상태 변경 완료. productId={}, isActive={}", productId, request.getIsActive());
 
-        return GetProductResponse.from(product);
+        return GetProductResponse.forOwner(product);
     }
 
     public StockAdjustResponse stockIn(String userName, Long productId, StockAdjustRequest request) {
@@ -222,9 +222,17 @@ public class ProductService {
         User user = findUserByUserName(userName);
         Store store = findStoreByUser(user);
 
-        Product product = findActiveProduct(productId);
+        Product product = productRepository.findByIdForUpdate(productId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+        if (product.isDeleted()) {
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
 
         validateProductOwner(store, product);
+
+        if (product.getAvailableStock() < request.getQuantity()) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+        }
 
         product.decreaseStock(request.getQuantity());
 

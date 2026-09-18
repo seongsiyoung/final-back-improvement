@@ -338,7 +338,7 @@ public class LocalDataInitializer implements CommandLineRunner {
                 log.info("결제 더미데이터: user@test.com 장바구니에 상품 {}건 담김", added);
             }
 
-            // 결제 더미데이터 user@test.com 배송지·결제수단 1건씩 (주문 생성 API POST /api/orders 호출 시 사용)
+            // 체크아웃·구독 결제 확인용 user@test.com 배송지·결제수단 1건씩
             if (addressRepository.findByUserOrderByIsDefaultDesc(testUser).isEmpty()) {
                 Address addr = Address.builder()
                         .user(testUser)

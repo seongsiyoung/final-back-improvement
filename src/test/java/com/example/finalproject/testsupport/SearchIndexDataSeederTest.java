@@ -3,12 +3,14 @@ package com.example.finalproject.testsupport;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Tag;
+import org.springframework.test.annotation.DirtiesContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class SearchIndexDataSeederTest extends IntegrationTestSupport {
 
     @Autowired

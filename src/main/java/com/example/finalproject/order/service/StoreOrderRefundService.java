@@ -41,7 +41,7 @@ public class StoreOrderRefundService {
         // 이 락이 "한 주문에 진행 중인 환불은 하나"를 지키는 유일한 장치다.
         // store_order_id UNIQUE 를 없앤 뒤로는 DB 가 중복을 막아주지 않는다.
         Long orderId = storeOrder.getOrder().getId();
-        Payment payment = paymentRepository.findWithLockByOrder_Id(orderId)
+        Payment payment = paymentRepository.lockByOrderId(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
         if (refundRepository.findActiveByStoreOrderId(storeOrderId).isPresent()) {

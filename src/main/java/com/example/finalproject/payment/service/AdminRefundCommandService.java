@@ -67,7 +67,7 @@ public class AdminRefundCommandService {
         PaymentRefund selectedRefund = refundRepository.findById(refundId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REFUND_NOT_FOUND));
 
-        Payment payment = paymentRepository.findWithLockByOrder_Id(selectedRefund.getStoreOrder().getOrder().getId())
+        Payment payment = paymentRepository.lockByOrderId(selectedRefund.getStoreOrder().getOrder().getId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
         PaymentRefund refund = refundRepository.findActiveByStoreOrderId(selectedRefund.getStoreOrder().getId())
                 .filter(active -> active.getId().equals(refundId))
@@ -128,7 +128,7 @@ public class AdminRefundCommandService {
 
         // 활성 건 검사보다 먼저 Payment 행에 락을 잡는다.
         // 한 주문에 진행 중인 환불이 하나임을 지키는 유일한 장치다.
-        Payment payment = paymentRepository.findWithLockByOrder_Id(storeOrder.getOrder().getId())
+        Payment payment = paymentRepository.lockByOrderId(storeOrder.getOrder().getId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
         if (refundRepository.findActiveByStoreOrderId(storeOrder.getId()).isPresent()) {

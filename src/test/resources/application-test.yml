@@ -9,7 +9,10 @@ spring:
     password: placeholder
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 2
+      # 결제를 완결하는 요청 하나가 커넥션을 둘 쥔다 — AFTER_COMMIT 리스너의 REQUIRES_NEW 가
+      # 바깥 커넥션 반납 전에 두 번째를 요청한다. 동시성 테스트가 락이 아니라 커넥션 대기를
+      # 재지 않도록 넉넉히 잡는다. minimum-idle 이 0 이라 쓰지 않는 컨텍스트는 점유하지 않는다.
+      maximum-pool-size: 30
       minimum-idle: 0
 
   jpa:

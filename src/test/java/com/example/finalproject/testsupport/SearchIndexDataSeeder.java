@@ -52,6 +52,9 @@ public class SearchIndexDataSeeder {
     private void clearPreviousDataset() {
         jdbcTemplate.update("delete from store_business_hours where store_id in "
                 + "(select id from stores where store_name like ?)", STORE_PREFIX + "%");
+        jdbcTemplate.update("delete from order_products where product_id in "
+                + "(select id from products where store_id in "
+                + "(select id from stores where store_name like ?))", STORE_PREFIX + "%");
         jdbcTemplate.update("delete from products where store_id in "
                 + "(select id from stores where store_name like ?)", STORE_PREFIX + "%");
         jdbcTemplate.update("delete from stores where store_name like ?", STORE_PREFIX + "%");

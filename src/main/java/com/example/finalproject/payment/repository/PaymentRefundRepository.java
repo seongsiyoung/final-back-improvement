@@ -14,6 +14,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 
 public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Long> {
 
@@ -25,6 +27,10 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
             RefundStatus.RECONCILIATION_REQUIRED);
 
     List<PaymentRefund> findByStoreOrderIdOrderByCreatedAtDesc(Long storeOrderId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT pr FROM PaymentRefund pr WHERE pr.id = :refundId")
+    Optional<PaymentRefund> findWithLockById(@Param("refundId") Long refundId);
 
     @Query(value = "SELECT r FROM PaymentRefund r " +
             "JOIN FETCH r.storeOrder so " +
@@ -157,13 +163,16 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, Lo
     @Query("SELECT pr FROM PaymentRefund pr "
             + "WHERE pr.refundStatus IN (:statuses) "
             + "AND pr.updatedAt < :threshold "
-            + "ORDER BY pr.updatedAt ASC")
+            + "ORDER BY pr.lastReconciledAt ASC NULLS FIRST")
     List<PaymentRefund> findReconciliationTargets(
             @Param("statuses") Collection<RefundStatus> statuses,
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
 
     Page<PaymentRefund> findByRefundStatusInOrderByUpdatedAtAsc(Collection<RefundStatus> statuses, Pageable pageable);
+
+    long countByRefundStatusInAndReconcileAttemptsGreaterThanEqual(
+            Collection<RefundStatus> statuses, int reconcileAttempts);
 
     @EntityGraph(attributePaths = {"payment", "storeOrder", "storeOrder.order"})
     @Query(value = "SELECT pr FROM PaymentRefund pr "

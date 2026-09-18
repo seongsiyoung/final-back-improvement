@@ -15,14 +15,12 @@ import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.domain.Pageable;
@@ -31,19 +29,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
-
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -61,7 +49,7 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
 
         String email = "idem-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        seeder.seedStoreWithProducts(1, 100);
+        Store store = seeder.seedStoreWithProducts(1, 100);
 
         LoginRequest loginRequest = new LoginRequest();
         ReflectionTestUtils.setField(loginRequest, "email", email);
@@ -71,7 +59,6 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<LoginResponse>>() {});
         accessToken = loginResponse.getBody().getData().getAccessToken();
 
-        Store store = productRepository.findAll().stream().map(Product::getStore).findFirst().orElseThrow();
         Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0);
 
@@ -85,6 +72,8 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
                 "/api/payments/prepare", HttpMethod.POST, new HttpEntity<>(prepareRequest, headers),
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentPrepareResponse>>() {});
         paymentId = prepareResponse.getBody().getData().getPaymentId();
+
+        toss.stubGetPaymentByOrderIdNotFound(prepareResponse.getBody().getData().getPgOrderId());
     }
 
     @Test
@@ -99,10 +88,10 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
         ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> firstResponse = restTemplate.exchange(
                 "/api/payments/confirm", HttpMethod.POST, entity,
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
-        assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(firstResponse.getBody()).isNotNull();
         assertThat(firstResponse.getBody().isSuccess()).isFalse();
-        assertThat(firstResponse.getBody().getError().getCode()).isEqualTo("COMMON-000");
+        assertThat(firstResponse.getBody().getError().getCode()).isEqualTo("PAYMENT-010");
 
         ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> secondResponse = restTemplate.exchange(
                 "/api/payments/confirm", HttpMethod.POST, entity,
@@ -129,7 +118,7 @@ class PaymentConfirmIdempotencyKeyTest extends IntegrationTestSupport {
         ResponseEntity<ApiResponse<PostPaymentConfirmResponse>> firstResponse = restTemplate.exchange(
                 "/api/payments/confirm", HttpMethod.POST, new HttpEntity<>(firstRequest, headers),
                 new org.springframework.core.ParameterizedTypeReference<ApiResponse<PostPaymentConfirmResponse>>() {});
-        assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 
         PostPaymentConfirmRequest secondRequest = new PostPaymentConfirmRequest();
         ReflectionTestUtils.setField(secondRequest, "paymentId", paymentId);

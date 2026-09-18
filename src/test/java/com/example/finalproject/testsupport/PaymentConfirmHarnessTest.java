@@ -16,7 +16,6 @@ import com.example.finalproject.store.domain.Store;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.domain.Pageable;
@@ -27,14 +26,6 @@ import org.springframework.http.ResponseEntity;
 
 class PaymentConfirmHarnessTest extends IntegrationTestSupport {
 
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @org.springframework.test.context.DynamicPropertySource
-    static void tossProps(org.springframework.test.context.DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
-
     @Autowired
     private TestRestTemplate restTemplate;
     @Autowired
@@ -43,6 +34,7 @@ class PaymentConfirmHarnessTest extends IntegrationTestSupport {
     private ProductRepository productRepository;
 
     private String email;
+    private Store store;
 
     @BeforeEach
     void setUp() {
@@ -50,7 +42,7 @@ class PaymentConfirmHarnessTest extends IntegrationTestSupport {
         toss.stubCancelSuccess();
         email = "harness-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        seeder.seedStoreWithProducts(1, 100);
+        store = seeder.seedStoreWithProducts(1, 100);
     }
 
     @Test
@@ -67,10 +59,6 @@ class PaymentConfirmHarnessTest extends IntegrationTestSupport {
         assertThat(loginResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         String accessToken = loginResponse.getBody().getData().getAccessToken();
 
-        Store store = productRepository.findAll().stream()
-                .map(Product::getStore)
-                .findFirst()
-                .orElseThrow();
         Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
                 .getContent().get(0);
 

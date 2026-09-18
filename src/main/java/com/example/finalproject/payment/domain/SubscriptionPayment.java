@@ -79,6 +79,12 @@ public class SubscriptionPayment extends BaseTimeEntity {
     @Column(name = "billing_cycle_date")
     private LocalDate billingCycleDate;
 
+    @Column(name = "reconcile_attempts", nullable = false)
+    private int reconcileAttempts = 0;
+
+    @Column(name = "last_reconciled_at")
+    private LocalDateTime lastReconciledAt;
+
     @Builder
     public SubscriptionPayment(Subscription subscription,
                                PaymentMethodType paymentMethod,
@@ -119,5 +125,12 @@ public class SubscriptionPayment extends BaseTimeEntity {
 
     public void markReconciliationRequired() {
         this.paymentStatus = PaymentStatus.RECONCILIATION_REQUIRED;
+    }
+
+    public void recordReconciliationAttempt(boolean unresolvedAfterSuccessfulLookup) {
+        this.lastReconciledAt = LocalDateTime.now();
+        if (unresolvedAfterSuccessfulLookup) {
+            this.reconcileAttempts++;
+        }
     }
 }

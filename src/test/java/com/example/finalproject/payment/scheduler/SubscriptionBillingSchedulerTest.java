@@ -13,7 +13,6 @@ import com.example.finalproject.subscription.repository.SubscriptionProductRepos
 import com.example.finalproject.subscription.repository.SubscriptionRepository;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import com.example.finalproject.user.domain.Address;
 import com.example.finalproject.user.domain.User;
 import com.example.finalproject.user.repository.AddressRepository;
@@ -21,21 +20,10 @@ import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 class SubscriptionBillingSchedulerTest extends IntegrationTestSupport {
-
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
 
     @Autowired
     private SubscriptionBillingScheduler scheduler;

@@ -31,11 +31,6 @@ class TossCircuitBreakerWorkerOccupancy200Test extends AbstractTossCircuitBreake
     static void tomcatThreadsProps(DynamicPropertyRegistry registry) {
         registry.add("server.tomcat.threads.max", () -> TOMCAT_MAX_THREADS);
         registry.add("server.tomcat.threads.min-spare", () -> TOMCAT_MAX_THREADS);
-        // prepareNewPayment()는 confirm과 별개로 DB에 짧게 쓴다. 230개 동시 시도가 한꺼번에
-        // prepare를 호출하는 순간, test 프로파일 기본 HikariCP 풀(2)로는 그 자체가 톰캣 워커를
-        // 오래 붙잡는 새 병목이 될 수 있어(커넥션 대기 중에도 워커는 점유된 채다) 이 테스트에서만
-        // 올린다 — 8-worker 조건은 동시성이 10이라 이 문제가 드러나지 않았다.
-        registry.add("spring.datasource.hikari.maximum-pool-size", () -> 30);
     }
 
     @Override

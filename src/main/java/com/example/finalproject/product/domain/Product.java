@@ -62,6 +62,10 @@ public class Product extends BaseTimeEntity {
     @Column(nullable = false)
     private Integer stock = 0;
 
+    // 결제 승인 전 선점 수량
+    @Column(nullable = false, columnDefinition = "integer not null default 0")
+    private Integer reserved = 0;
+
     @Column(length = 100)
     private String origin;
 
@@ -104,6 +108,7 @@ public class Product extends BaseTimeEntity {
         this.discountRate = discountRate;
         this.salePrice = calculateSalePrice(price, discountRate);
         this.stock = stock != null ? stock : 0;
+        this.reserved = 0;
         this.origin = origin;
         this.productImageUrl = productImageUrl;
     }
@@ -190,6 +195,46 @@ public class Product extends BaseTimeEntity {
             this.isActive = false;
         }
 
+    }
+
+    public int getAvailableStock() {
+        return this.stock - this.reserved;
+    }
+
+    public void reserve(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        if (getAvailableStock() < quantity) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+        }
+        this.reserved += quantity;
+    }
+
+    public void releaseReservation(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        if (this.reserved < quantity) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        this.reserved -= quantity;
+    }
+
+    public void confirmReservation(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        if (this.reserved < quantity) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK_QUANTITY);
+        }
+        this.reserved -= quantity;
+        this.stock -= quantity;
+
+        //판매 중지 상태로 전환
+        if (this.stock == 0) {
+            this.isActive = false;
+        }
     }
 
     private void validateProductName(String productName) {

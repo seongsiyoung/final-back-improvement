@@ -45,7 +45,8 @@ class PaymentServiceTest {
                 mock(DeliveryFeeService.class),
                 tossPaymentsClient,
                 paymentConfirmCommandService,
-                PassThroughCircuitBreakerFactory.create());
+                PassThroughCircuitBreakerFactory.create(),
+                mock(TerminatedPaymentCleanupService.class));
     }
 
     private PostPaymentConfirmRequest confirmRequest(Long paymentId) {

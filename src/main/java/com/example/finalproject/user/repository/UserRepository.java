@@ -2,10 +2,12 @@ package com.example.finalproject.user.repository;
 
 import com.example.finalproject.user.domain.User;
 import com.example.finalproject.user.enums.UserStatus;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.util.Optional;
@@ -18,6 +20,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByPhone(String phone);
 
     Optional<User> findByEmail(String email);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<User> findWithLockByEmail(String email);
 
     Optional<User> findByEmailAndDeletedAtIsNull(String email);
 

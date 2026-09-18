@@ -7,6 +7,8 @@ public enum SseEventType {
     CONNECTED("connected"),
     STORE_ORDER_CREATED("store-order-created"),
     STORE_ORDER_UPDATED("store-order-updated"),
+    PAYMENT_APPROVED("payment-approved"),
+    PAYMENT_FAILED("payment-failed"),
     ORDER_CREATED("order-created"),
     NEW_DELIVERY("new-delivery"),
     NEARBY_DELIVERIES("nearby-deliveries"),

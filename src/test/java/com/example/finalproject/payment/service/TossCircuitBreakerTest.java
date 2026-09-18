@@ -11,18 +11,17 @@ import com.example.finalproject.payment.dto.request.PostPaymentConfirmRequest;
 import com.example.finalproject.payment.dto.request.PostPaymentPrepareRequest;
 import com.example.finalproject.payment.dto.response.PostPaymentPrepareResponse;
 import com.example.finalproject.payment.enums.PaymentMethodType;
-import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
-import com.example.finalproject.testsupport.TossStub;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import java.util.Iterator;
 import java.util.Map;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
@@ -32,8 +31,6 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -44,14 +41,6 @@ import org.springframework.test.util.ReflectionTestUtils;
  */
 class TossCircuitBreakerTest extends IntegrationTestSupport {
 
-    @RegisterExtension
-    static TossStub toss = new TossStub();
-
-    @DynamicPropertySource
-    static void tossProps(DynamicPropertyRegistry registry) {
-        registry.add("toss.payments.base-url", toss::baseUrl);
-    }
-
     @Autowired
     private TestRestTemplate restTemplate;
     @Autowired
@@ -61,14 +50,20 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
     @Autowired
     private CircuitBreakerFactory<?, ?> circuitBreakerFactory;
 
-    private String accessToken;
     private Long productId;
+
 
     @BeforeEach
     void setUp() {
+        Store store = seeder.seedStoreWithProducts(1, 100);
+
+        productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
+                .getContent().get(0).getId();
+    }
+
+    private String newCustomerToken() {
         String email = "cb-" + System.nanoTime() + "@test.com";
         seeder.seedUserWithAddress(email, "password1234!");
-        seeder.seedStoreWithProducts(1, 100);
 
         LoginRequest loginRequest = new LoginRequest();
         ReflectionTestUtils.setField(loginRequest, "email", email);
@@ -76,11 +71,7 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         ResponseEntity<ApiResponse<LoginResponse>> loginResponse = restTemplate.exchange(
                 "/api/auth/login", HttpMethod.POST, new HttpEntity<>(loginRequest),
                 new org.springframework.core.ParameterizedTypeReference<>() {});
-        accessToken = loginResponse.getBody().getData().getAccessToken();
-
-        Store store = productRepository.findAll().stream().map(Product::getStore).findFirst().orElseThrow();
-        productId = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
-                .getContent().get(0).getId();
+        return loginResponse.getBody().getData().getAccessToken();
     }
 
     private CircuitBreaker tossPaymentCircuitBreaker() {
@@ -90,7 +81,11 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         return factory.getCircuitBreakerRegistry().circuitBreaker("toss-payment");
     }
 
-    private Long prepareNewPayment() {
+    private ResponseEntity<String> confirmAs(String accessToken) {
+        return callConfirm(accessToken, prepareNewPayment(accessToken));
+    }
+
+    private Long prepareNewPayment(String accessToken) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         PostPaymentPrepareRequest prepareRequest = new PostPaymentPrepareRequest();
@@ -103,13 +98,13 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         return prepareResponse.getBody().getData().getPaymentId();
     }
 
-    private void callConfirm(Long paymentId) {
+    private ResponseEntity<String> callConfirm(String accessToken, Long paymentId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         PostPaymentConfirmRequest confirmRequest = new PostPaymentConfirmRequest();
         ReflectionTestUtils.setField(confirmRequest, "paymentId", paymentId);
-        ReflectionTestUtils.setField(confirmRequest, "paymentKey", "test-payment-key");
-        restTemplate.exchange("/api/payments/confirm", HttpMethod.POST,
+        ReflectionTestUtils.setField(confirmRequest, "paymentKey", "test-payment-key-" + paymentId);
+        return restTemplate.exchange("/api/payments/confirm", HttpMethod.POST,
                 new HttpEntity<>(confirmRequest, headers), String.class);
     }
 
@@ -118,10 +113,13 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         toss.server.stubFor(WireMock.post(urlPathMatching("/v1/payments/confirm"))
                 .willReturn(WireMock.aResponse().withStatus(500)));
 
-        // minimumNumberOfCalls(5) — 5번째 호출이 끝나는 순간 실패율 100%로 평가되어 OPEN 전이가
-        // 일어난다. 순차(블로킹) 호출이라 레이스 없이 결정적이다.
+        Iterator<String> customers = IntStream.range(0, 9)
+                .mapToObj(i -> newCustomerToken())
+                .toList()
+                .iterator();
+
         for (int i = 0; i < 5; i++) {
-            callConfirm(prepareNewPayment());
+            confirmAs(customers.next());
         }
 
         assertThat(tossPaymentCircuitBreaker().getState()).isEqualTo(CircuitBreaker.State.OPEN);
@@ -131,7 +129,7 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
 
         // 회로가 OPEN이므로 추가 호출은 CallNotPermittedException으로 즉시 실패해
         // WireMock까지 도달하지 않아야 한다.
-        callConfirm(prepareNewPayment());
+        confirmAs(customers.next());
         int requestCountWhileOpen =
                 toss.server.findAll(postRequestedFor(urlPathMatching("/v1/payments/confirm"))).size();
 
@@ -149,7 +147,7 @@ class TossCircuitBreakerTest extends IntegrationTestSupport {
         // 완전한 CLOSED 복귀를 증명하려면 3건 모두 성공시켜야 한다.
         toss.stubConfirmSuccess();
         for (int i = 0; i < 3; i++) {
-            callConfirm(prepareNewPayment());
+            assertThat(confirmAs(customers.next()).getStatusCode().is2xxSuccessful()).isTrue();
         }
 
         assertThat(tossPaymentCircuitBreaker().getState()).isEqualTo(CircuitBreaker.State.CLOSED);

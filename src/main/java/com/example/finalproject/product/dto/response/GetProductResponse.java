@@ -22,7 +22,15 @@ public class GetProductResponse {
     private Integer orderCount;
     private String productImageUrl;
 
-    public static GetProductResponse from(Product product) {
+    public static GetProductResponse forCustomer(Product product) {
+        return from(product, product.getAvailableStock());
+    }
+
+    public static GetProductResponse forOwner(Product product) {
+        return from(product, product.getStock());
+    }
+
+    private static GetProductResponse from(Product product, Integer stock) {
         return GetProductResponse.builder()
                 .productId(product.getId())
                 .categoryId(product.getProductCategory().getId())
@@ -32,7 +40,7 @@ public class GetProductResponse {
                 .price(product.getPrice())
                 .salePrice(product.getSalePrice())
                 .discountRate(product.getDiscountRate())
-                .stock(product.getStock())
+                .stock(stock)
                 .origin(product.getOrigin())
                 .isActive(product.getIsActive())
                 .orderCount(product.getOrderCount())

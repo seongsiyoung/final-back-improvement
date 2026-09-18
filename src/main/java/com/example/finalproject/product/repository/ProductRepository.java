@@ -36,6 +36,10 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("select p from Product p where p.id = :id")
     Optional<Product> findByIdForUpdate(@Param("id") Long id);
 
+    /** 선점이 걸려 있는 상품. 드리프트 점검의 실제값이다. */
+    @Query("select p.id, p.reserved from Product p where p.reserved > 0")
+    List<Object[]> findReservedQuantities();
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from Product p where p.id in :ids")
     List<Product> findAllByIdForUpdate(@Param("ids") List<Long> ids);

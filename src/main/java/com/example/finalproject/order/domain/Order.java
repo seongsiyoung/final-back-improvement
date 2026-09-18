@@ -102,6 +102,14 @@ public class Order extends BaseTimeEntity {
         this.status = OrderStatus.CANCELLED;
     }
 
+    /** 미결제 주문만 취소한다. */
+    public void cancelUnpaid() {
+        if (this.status != OrderStatus.PENDING) {
+            return;
+        }
+        this.status = OrderStatus.CANCELLED;
+    }
+
     public void partialCancel() {
         this.status = OrderStatus.PARTIAL_CANCELLED;
     }

@@ -157,6 +157,14 @@ public enum ErrorCode {
     INVALID_CANCEL_AMOUNT(HttpStatus.BAD_REQUEST, "PAYMENT-006", "취소 금액이 올바르지 않습니다."),
     INVALID_REFUND_AMOUNT(HttpStatus.BAD_REQUEST, "PAYMENT-007", "환불 금액이 결제 금액을 초과합니다."),
     INVALID_PAYMENT_CANCEL_STATUS(HttpStatus.BAD_REQUEST, "PAYMENT-008", "결제를 취소할 수 있는 상태가 아닙니다."),
+    PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "PAYMENT-009", "결제 결과를 확인 중입니다."),
+    PAYMENT_REJECTED(HttpStatus.BAD_REQUEST, "PAYMENT-010", "결제가 거절되었습니다. 처음부터 다시 시도해주세요."),
+    PAYMENT_TEMPORARILY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "PAYMENT-011",
+            "결제 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 처음부터 다시 시도해주세요."),
+    PAYMENT_RESULT_PENDING(HttpStatus.CONFLICT, "PAYMENT-012",
+            "결제 결과를 확인 중입니다. 결제를 다시 시도하지 마세요."),
+    APPROVED_PAYMENT_CANNOT_BE_NOT_CHARGED(HttpStatus.BAD_REQUEST, "PAYMENT-013",
+            "승인 기록이 있는 결제를 미청구로 종결할 수 없습니다."),
 
 
     // ORDER (order-checkout)
@@ -210,6 +218,11 @@ public enum ErrorCode {
      * API 에러 응답 코드: 409 → ERR_CONFLICT, 400 → ERR_VALIDATION, 422 → ERR_UNPROCESSABLE
      */
     public String getApiCode() {
+        if (this == PAYMENT_REJECTED
+                || this == PAYMENT_TEMPORARILY_UNAVAILABLE
+                || this == PAYMENT_RESULT_PENDING) {
+            return code;
+        }
         if (status == HttpStatus.CONFLICT) {
             return "ERR_CONFLICT";
         }

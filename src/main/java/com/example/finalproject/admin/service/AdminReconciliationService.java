@@ -29,6 +29,7 @@ import java.util.TreeMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,6 +53,8 @@ public class AdminReconciliationService {
     private static final List<PaymentStatus> DANGLING_PAYMENT_STATUSES =
             List.of(PaymentStatus.APPROVED, PaymentStatus.PARTIAL_REFUNDED);
     private static final List<String> PAYMENT_OUTCOMES = List.of("NOT_CHARGED", "REFUNDED");
+    /** 승인 기록이 있는 결제는 미청구로 종결할 수 없다. 고를 수 있는 결과가 하나뿐이다. */
+    private static final List<String> APPROVED_PAYMENT_OUTCOMES = List.of("REFUNDED");
     private static final List<String> REFUND_OUTCOMES = List.of("REFUNDED", "NOT_REFUNDED");
 
     private final UserRepository userRepository;
@@ -59,6 +62,9 @@ public class AdminReconciliationService {
     private final SubscriptionPaymentRepository subscriptionPaymentRepository;
     private final PaymentRefundRepository paymentRefundRepository;
     private final StoreOrderRepository storeOrderRepository;
+
+    @Value("${reconciliation.attention-attempts:12}")
+    private int attentionAttempts;
 
     public AdminActionRequiredListResponse getActionRequired(String adminEmail, Pageable pageable) {
         validateAdmin(adminEmail);
@@ -103,14 +109,17 @@ public class AdminReconciliationService {
                 buildAutoRecoverySummary(),
                 paymentRepository.findByPaymentStatusInOrderByUpdatedAtAsc(AUTO_PAYMENT_STATUSES, pageable)
                         .map(payment -> toAutoRecoveryItem(
-                                payment.getId(), payment.getPaymentStatus().name(), payment.getUpdatedAt())),
+                                payment.getId(), payment.getPaymentStatus().name(), payment.getUpdatedAt(),
+                                payment.getLastReconciledAt(), payment.getReconcileAttempts())),
                 subscriptionPaymentRepository
                         .findByPaymentStatusInOrderByUpdatedAtAsc(AUTO_PAYMENT_STATUSES, pageable)
                         .map(payment -> toAutoRecoveryItem(
-                                payment.getId(), payment.getPaymentStatus().name(), payment.getUpdatedAt())),
+                                payment.getId(), payment.getPaymentStatus().name(), payment.getUpdatedAt(),
+                                payment.getLastReconciledAt(), payment.getReconcileAttempts())),
                 paymentRefundRepository.findByRefundStatusInOrderByUpdatedAtAsc(AUTO_REFUND_STATUSES, pageable)
                         .map(refund -> toAutoRecoveryItem(
-                                refund.getId(), refund.getRefundStatus().name(), refund.getUpdatedAt())));
+                                refund.getId(), refund.getRefundStatus().name(), refund.getUpdatedAt(),
+                                refund.getLastReconciledAt(), refund.getReconcileAttempts())));
     }
 
     private AdminReconciliationSummaryResponse buildAutoRecoverySummary() {
@@ -137,7 +146,17 @@ public class AdminReconciliationService {
         return new AdminReconciliationSummaryResponse(
                 totalCount,
                 oldestUpdatedAt,
+                countAttentionTargets(),
                 new LinkedHashMap<>(countsByStatus));
+    }
+
+    private long countAttentionTargets() {
+        return paymentRepository.countByPaymentStatusInAndReconcileAttemptsGreaterThanEqual(
+                        AUTO_PAYMENT_STATUSES, attentionAttempts)
+                + subscriptionPaymentRepository.countByPaymentStatusInAndReconcileAttemptsGreaterThanEqual(
+                        AUTO_PAYMENT_STATUSES, attentionAttempts)
+                + paymentRefundRepository.countByRefundStatusInAndReconcileAttemptsGreaterThanEqual(
+                        AUTO_REFUND_STATUSES, attentionAttempts);
     }
 
     private AdminReconciliationItemResponse toPaymentItem(Payment payment, boolean rejectedOrder) {
@@ -146,7 +165,8 @@ public class AdminReconciliationService {
                 payment.getPaymentStatus().name(),
                 payment.getUpdatedAt(),
                 rejectedOrder ? "INVESTIGATE" : "RESOLVE",
-                rejectedOrder ? List.of() : PAYMENT_OUTCOMES,
+                rejectedOrder ? List.of() : payment.hasApprovalRecord()
+                        ? APPROVED_PAYMENT_OUTCOMES : PAYMENT_OUTCOMES,
                 !rejectedOrder,
                 payment.getPgOrderId(),
                 payment.getAmount(),
@@ -194,8 +214,10 @@ public class AdminReconciliationService {
     }
 
     private AdminAutoRecoveryItemResponse toAutoRecoveryItem(
-            Long id, String status, LocalDateTime updatedAt) {
-        return new AdminAutoRecoveryItemResponse(id, status, updatedAt);
+            Long id, String status, LocalDateTime updatedAt, LocalDateTime lastReconciledAt, int reconcileAttempts) {
+        return new AdminAutoRecoveryItemResponse(
+                id, status, updatedAt, lastReconciledAt, reconcileAttempts,
+                reconcileAttempts >= attentionAttempts);
     }
 
     private User validateAdmin(String adminEmail) {

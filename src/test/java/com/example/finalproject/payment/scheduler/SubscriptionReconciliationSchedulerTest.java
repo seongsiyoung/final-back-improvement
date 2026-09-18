@@ -72,6 +72,21 @@ class SubscriptionReconciliationSchedulerTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("PG 조회 실패도 다음 대상 선정을 위해 조회 시각을 남기되 횟수는 세지 않는다")
+    void reconcile_queryFailure_recordsAttemptTimeWithoutIncreasingAttempts() {
+        SubscriptionPayment payment = onlyStuck(PaymentStatus.PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(payment.getPgOrderId()))
+                .thenThrow(new RuntimeException("Toss 조회 실패"));
+
+        subscriptionReconciliationScheduler.reconcileStuckSubscriptionPayments();
+
+        SubscriptionPayment after = subscriptionPaymentRepository.findById(payment.getId()).orElseThrow();
+        assertThat(after.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(after.getLastReconciledAt()).isNotNull();
+        assertThat(after.getReconcileAttempts()).isZero();
+    }
+
+    @Test
     @DisplayName("최근에 상태가 바뀐 건은 같은 주기에 다시 집지 않는다")
     void reconcile_ignoresRecentTargets() {
         subscriptionScenarioSeeder.hideAllSubscriptionReconciliationTargets();

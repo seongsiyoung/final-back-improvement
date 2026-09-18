@@ -12,6 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 class ReconciliationTargetQueryTest extends IntegrationTestSupport {
 
@@ -19,6 +20,8 @@ class ReconciliationTargetQueryTest extends IntegrationTestSupport {
     private PaymentRepository paymentRepository;
     @Autowired
     private RefundScenarioSeeder refundScenarioSeeder;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     @DisplayName("재조정 대상은 오래된 순으로 상한만큼만 가져온다")
@@ -73,6 +76,25 @@ class ReconciliationTargetQueryTest extends IntegrationTestSupport {
                 PageRequest.of(0, 100));
 
         assertThat(targets).extracting(Payment::getId).contains(pending, reversal);
+    }
+
+    @Test
+    @DisplayName("아직 조회하지 않은 건을 최근에 조회한 건보다 먼저 가져온다")
+    void findReconciliationTargets_prioritizesNeverReconciledPayments() {
+        Long recentlyReconciled = seedStuckPayment(PaymentStatus.PENDING, 30);
+        Long neverReconciled = seedStuckPayment(PaymentStatus.PENDING, 20);
+        jdbcTemplate.update("update payments set last_reconciled_at = now() where id = ?", recentlyReconciled);
+
+        List<Long> targetIds = paymentRepository.findReconciliationTargets(
+                        List.of(PaymentStatus.PENDING),
+                        LocalDateTime.now().minusMinutes(5),
+                        PageRequest.of(0, 100))
+                .stream()
+                .map(Payment::getId)
+                .filter(id -> id.equals(recentlyReconciled) || id.equals(neverReconciled))
+                .toList();
+
+        assertThat(targetIds).containsExactly(neverReconciled, recentlyReconciled);
     }
 
     private Long seedStuckPayment(PaymentStatus status, int minutesAgo) {

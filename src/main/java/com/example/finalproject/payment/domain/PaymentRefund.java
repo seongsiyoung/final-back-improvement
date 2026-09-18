@@ -64,6 +64,12 @@ public class PaymentRefund extends BaseTimeEntity {
     @Column(name = "is_settled", nullable = false)
     private boolean isSettled = false;
 
+    @Column(name = "reconcile_attempts", nullable = false)
+    private int reconcileAttempts = 0;
+
+    @Column(name = "last_reconciled_at")
+    private LocalDateTime lastReconciledAt;
+
     public void markSettled() {
         this.isSettled = true;
     }
@@ -141,5 +147,12 @@ public class PaymentRefund extends BaseTimeEntity {
 
     public void markPgRejected() {
         this.refundStatus = RefundStatus.PG_REJECTED;
+    }
+
+    public void recordReconciliationAttempt(boolean unresolvedAfterSuccessfulLookup) {
+        this.lastReconciledAt = LocalDateTime.now();
+        if (unresolvedAfterSuccessfulLookup) {
+            this.reconcileAttempts++;
+        }
     }
 }

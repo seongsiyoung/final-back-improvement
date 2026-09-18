@@ -76,6 +76,12 @@ public class Payment extends BaseTimeEntity {
 
     private Integer refundedAmount = 0;
 
+    @Column(name = "reconcile_attempts", nullable = false)
+    private int reconcileAttempts = 0;
+
+    @Column(name = "last_reconciled_at")
+    private LocalDateTime lastReconciledAt;
+
     @Builder
     public Payment(Order order, PaymentStatus paymentStatus, PaymentMethodType paymentMethod, Integer amount,
                    String pgOrderId, String pgProvider) {
@@ -155,6 +161,11 @@ public class Payment extends BaseTimeEntity {
         this.paymentStatus = PaymentStatus.REVERSAL_PENDING;
     }
 
+    /** PG 승인 반영 여부를 반환한다. */
+    public boolean hasApprovalRecord() {
+        return this.paidAt != null;
+    }
+
     public void markReconciliationRequired() {
         this.paymentStatus = PaymentStatus.RECONCILIATION_REQUIRED;
     }
@@ -184,5 +195,12 @@ public class Payment extends BaseTimeEntity {
         this.paymentStatus = (this.refundedAmount == null || this.refundedAmount == 0)
                 ? PaymentStatus.APPROVED
                 : PaymentStatus.PARTIAL_REFUNDED;
+    }
+
+    public void recordReconciliationAttempt(boolean unresolvedAfterSuccessfulLookup) {
+        this.lastReconciledAt = LocalDateTime.now();
+        if (unresolvedAfterSuccessfulLookup) {
+            this.reconcileAttempts++;
+        }
     }
 }

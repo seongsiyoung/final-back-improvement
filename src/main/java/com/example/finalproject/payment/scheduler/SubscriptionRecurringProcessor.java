@@ -2,6 +2,7 @@ package com.example.finalproject.payment.scheduler;
 
 import com.example.finalproject.global.exception.custom.BusinessException;
 import com.example.finalproject.global.exception.custom.ErrorCode;
+import com.example.finalproject.payment.service.SubscriptionChargeBlockedException;
 import com.example.finalproject.payment.service.SubscriptionBillingService;
 import com.example.finalproject.subscription.repository.SubscriptionRepository;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,18 @@ public class SubscriptionRecurringProcessor {
 
         try {
             subscriptionBillingService.chargeMonthlyFee(subscriptionId);
+        } catch (SubscriptionChargeBlockedException e) {
+            switch (e.getBlockingPaymentStatus()) {
+                case APPROVED -> subscriptionRecurringCommandService.advanceAfterSuccessfulCharge(subscriptionId);
+                case PENDING, REVERSAL_PENDING, RECONCILIATION_REQUIRED -> {
+                    return;
+                }
+                default -> {
+                    subscriptionRecurringCommandService.markPaymentFailed(subscriptionId);
+                    throw e;
+                }
+            }
+            return;
         } catch (Exception e) {
             // 결제 승인 자체가 실패한 경우에만 결제 실패로 기록한다.
             subscriptionRecurringCommandService.markPaymentFailed(subscriptionId);

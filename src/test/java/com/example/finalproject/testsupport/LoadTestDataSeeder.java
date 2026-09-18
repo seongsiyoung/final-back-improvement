@@ -21,6 +21,7 @@ import com.example.finalproject.user.repository.RoleRepository;
 import com.example.finalproject.user.repository.UserRepository;
 import com.example.finalproject.user.repository.UserRoleRepository;
 import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -79,6 +80,8 @@ public class LoadTestDataSeeder {
         return user;
     }
 
+    private static final AtomicInteger OWNER_PHONE_SEQUENCE = new AtomicInteger();
+
     public Store seedStoreWithProducts(int productCount, int stockPerProduct) {
         return seedStoreWithProducts("load-test-store-owner@test.com", productCount, stockPerProduct);
     }
@@ -100,7 +103,7 @@ public class LoadTestDataSeeder {
                         .email(ownerEmail)
                         .password(passwordEncoder.encode("owner1234!"))
                         .name("부하테스트오너")
-                        .phone("0109999" + String.format("%04d", Math.abs(ownerEmail.hashCode() % 10000)))
+                        .phone("0109" + String.format("%07d", OWNER_PHONE_SEQUENCE.incrementAndGet()))
                         .termsAgreed(true)
                         .privacyAgreed(true)
                         .termsAgreedAt(LocalDateTime.now())

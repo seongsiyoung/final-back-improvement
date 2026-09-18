@@ -28,9 +28,14 @@ import com.example.finalproject.product.domain.Product;
 import com.example.finalproject.product.repository.ProductRepository;
 import com.example.finalproject.user.domain.Address;
 import com.example.finalproject.user.domain.User;
+import feign.FeignException;
 import java.time.LocalDateTime;
+import java.util.EnumSet;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +48,18 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PaymentService {
 
+    /** 사용자별 승인 전 미확정 결제 상한. */
+    private static final int MAX_UNRESOLVED_PAYMENTS = 3;
+    private static final EnumSet<PaymentStatus> REPLACEABLE_PAYMENT_STATUSES = EnumSet.of(
+            PaymentStatus.READY
+    );
+    private static final EnumSet<PaymentStatus> UNRESOLVED_PAYMENT_STATUSES = EnumSet.of(
+            PaymentStatus.PENDING,
+            PaymentStatus.REVERSAL_PENDING,
+            PaymentStatus.RECONCILIATION_REQUIRED
+    );
+    private static final Set<String> FAILED_PG_STATUSES = Set.of("ABORTED", "CANCELED", "EXPIRED");
+
     private final UserLoader userLoader;
     private final ProductRepository productRepository;
     private final OrderRepository orderRepository;
@@ -52,6 +69,7 @@ public class PaymentService {
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentConfirmCommandService paymentConfirmCommandService;
     private final CircuitBreakerFactory<?, ?> circuitBreakerFactory;
+    private final TerminatedPaymentCleanupService terminatedPaymentCleanupService;
 
 
     @Transactional
@@ -59,11 +77,22 @@ public class PaymentService {
             String email,
             PostPaymentPrepareRequest request) {
 
-        User user = userLoader.loadUserByUsername(email);
+        User user = userLoader.loadUserByUsernameWithLock(email);
+
+        List<Payment> replaceable = loadReplaceableReadyPayments(user.getId());
+
+        blockWhenUnresolvedPaymentsReachCap(user.getId());
 
         validateRequest(request);
 
-        List<Product> products = loadAndValidateProducts(request);
+        lockCheckoutProducts(replaceable, request);
+
+        replaceable.forEach(payment -> {
+            payment.fail();
+            terminatedPaymentCleanupService.cleanUp(payment);
+        });
+
+        List<Product> products = lockValidateAndReserveProducts(request);
 
         Order order = createOrder(user, request, products);
 
@@ -78,6 +107,35 @@ public class PaymentService {
                 payment.getPgOrderId(),
                 payment.getAmount()
         );
+    }
+
+    private void blockWhenUnresolvedPaymentsReachCap(Long userId) {
+        long unresolved = paymentRepository.countByOrder_UserIdAndPaymentStatusInAndPaidAtIsNull(
+                userId, UNRESOLVED_PAYMENT_STATUSES);
+
+        if (unresolved >= MAX_UNRESOLVED_PAYMENTS) {
+            throw new BusinessException(ErrorCode.PAYMENT_IN_PROGRESS);
+        }
+    }
+
+    private List<Payment> loadReplaceableReadyPayments(Long userId) {
+        return paymentRepository.lockByUserIdAndStatuses(
+                userId, REPLACEABLE_PAYMENT_STATUSES);
+    }
+
+    /** 기존 READY 반납과 신규 선점 대상 상품을 같은 순서로 잠근다. */
+    private void lockCheckoutProducts(List<Payment> replaceable, PostPaymentPrepareRequest request) {
+        Set<Long> productIds = new TreeSet<>(request.getProductQuantities().keySet());
+
+        for (Payment payment : replaceable) {
+            orderLineRepository.findAllByOrderId(payment.getOrder().getId())
+                    .forEach(line -> productIds.add(line.getProductId()));
+        }
+
+        for (Long productId : productIds) {
+            productRepository.findByIdForUpdate(productId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+        }
     }
 
     public PostPaymentConfirmResponse confirm(
@@ -104,11 +162,59 @@ public class PaymentService {
             PgCallOutcome outcome = PgFailureClassifier.classify(e);
             log.error("[PG_CONFIRM_ERROR] paymentId={}, outcome={}, error={}",
                     paymentId, outcome, e.getMessage(), e);
-            if (outcome == PgCallOutcome.NOT_SENT || outcome == PgCallOutcome.EXPLICIT_REJECTION) {
-                paymentConfirmCommandService.revertPendingToReady(paymentId);
+            if (outcome == PgCallOutcome.RESULT_UNKNOWN) {
+                PgLookupResult lookup = lookupPaymentOnce(paymentId, confirmRequest.getOrderId());
+                if (lookup.outcome() == PgCallOutcome.SUCCESS) {
+                    return lookup.response();
+                }
+                outcome = lookup.outcome();
             }
-            throw e;
+            if (outcome == PgCallOutcome.NOT_SENT || outcome == PgCallOutcome.EXPLICIT_REJECTION) {
+                paymentConfirmCommandService.failPending(paymentId);
+            }
+            throw new BusinessException(errorCodeFor(outcome), e);
         }
+    }
+
+    private PgLookupResult lookupPaymentOnce(Long paymentId, String pgOrderId) {
+        TossConfirmResponse pg;
+        try {
+            pg = circuitBreakerFactory.create("toss-payment")
+                    .run(() -> tossPaymentsClient.getPaymentByOrderId(pgOrderId), TossCircuitBreakerFallback::rethrow);
+        } catch (FeignException.NotFound e) {
+            return new PgLookupResult(PgCallOutcome.EXPLICIT_REJECTION, null);
+        } catch (RuntimeException e) {
+            log.error("[PG_CONFIRM_LOOKUP_ERROR] paymentId={}, pgOrderId={}, error={}",
+                    paymentId, pgOrderId, e.getMessage(), e);
+            return new PgLookupResult(PgCallOutcome.RESULT_UNKNOWN, null);
+        }
+
+        if (pg == null) {
+            return new PgLookupResult(PgCallOutcome.RESULT_UNKNOWN, null);
+        }
+
+        String status = pg.getStatus();
+        if ("DONE".equals(status)) {
+            return new PgLookupResult(PgCallOutcome.SUCCESS, pg);
+        }
+        if ("PARTIAL_CANCELED".equals(status)) {
+            paymentConfirmCommandService.markConfirmReconciliationRequired(paymentId);
+        } else if (FAILED_PG_STATUSES.contains(status)) {
+            return new PgLookupResult(PgCallOutcome.EXPLICIT_REJECTION, null);
+        }
+        return new PgLookupResult(PgCallOutcome.RESULT_UNKNOWN, null);
+    }
+
+    private ErrorCode errorCodeFor(PgCallOutcome outcome) {
+        return switch (outcome) {
+            case EXPLICIT_REJECTION -> ErrorCode.PAYMENT_REJECTED;
+            case NOT_SENT -> ErrorCode.PAYMENT_TEMPORARILY_UNAVAILABLE;
+            case RESULT_UNKNOWN -> ErrorCode.PAYMENT_RESULT_PENDING;
+            case SUCCESS -> throw new IllegalStateException("성공한 PG 호출은 예외 응답으로 변환할 수 없습니다.");
+        };
+    }
+
+    private record PgLookupResult(PgCallOutcome outcome, TossConfirmResponse response) {
     }
 
     private PostPaymentConfirmResponse completeConfirmOrCancel(
@@ -158,19 +264,18 @@ public class PaymentService {
         }
     }
 
-    private List<Product> loadAndValidateProducts(PostPaymentPrepareRequest request) {
+    private List<Product> lockValidateAndReserveProducts(PostPaymentPrepareRequest request) {
 
         Map<Long, Integer> quantities = request.getProductQuantities();
 
-        List<Product> products = productRepository.findAllById(quantities.keySet());
+        List<Product> products = new ArrayList<>();
 
-        if (products.size() != quantities.size()) {
-            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
-        }
+        for (Long productId : quantities.keySet().stream().sorted().toList()) {
 
-        for (Product product : products) {
+            Product product = productRepository.findByIdForUpdate(productId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
 
-            int qty = quantities.get(product.getId());
+            int qty = quantities.get(productId);
 
             // 삭제 여부
             if (product.isDeleted()) {
@@ -182,16 +287,15 @@ public class PaymentService {
                 throw new BusinessException(ErrorCode.PRODUCT_NOT_AVAILABLE);
             }
 
-            // 재고 충분
-            if (product.getStock() < qty) {
-                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
-            }
-
             // 가격 검증
             int price = product.getEffectivePrice();
             if (price <= 0) {
                 throw new BusinessException(ErrorCode.INVALID_PRICE);
             }
+
+            product.reserve(qty);
+
+            products.add(product);
         }
 
         return products;

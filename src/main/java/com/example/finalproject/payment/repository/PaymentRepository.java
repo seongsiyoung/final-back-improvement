@@ -22,6 +22,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     long countByOrder_UserIdAndPaymentStatusIn(Long userId, Collection<PaymentStatus> paymentStatuses);
 
+    long countByOrder_UserIdAndPaymentStatusInAndPaidAtIsNull(
+            Long userId, Collection<PaymentStatus> paymentStatuses);
+
     List<Payment> findByOrder_IdIn(List<Long> orderIds);
 
     long countByPaymentStatusInAndPaidAtBetween(
@@ -50,22 +53,47 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Payment> findWithLockById(Long paymentId);
 
+    /** 파생 쿼리로 쓰면 orders 를 outer join 해 락이 붙지 않는다. FK 컬럼으로 직접 건다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    Optional<Payment> findWithLockByOrder_Id(Long orderId);
+    @Query("select p from Payment p where p.order.id = :orderId")
+    Optional<Payment> lockByOrderId(@Param("orderId") Long orderId);
+
+    /**
+     * 조인 대신 서브쿼리를 쓴다. 조인하면 잠금이 payments 와 orders 에 함께 걸리고,
+     * 파생 쿼리로 쓰면 outer join 이 생겨 잠금이 아예 붙지 않는다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Payment p "
+            + "where p.order.id in (select o.id from Order o where o.user.id = :userId) "
+            + "and p.paymentStatus in :statuses")
+    List<Payment> lockByUserIdAndStatuses(
+            @Param("userId") Long userId,
+            @Param("statuses") Collection<PaymentStatus> statuses);
 
     Optional<Payment> findByPgOrderId(String pgOrderId);
 
-    /** 재조정 대상. 오래된 것부터 상한만큼만 가져온다. */
     @Query("SELECT p FROM Payment p "
             + "WHERE p.paymentStatus IN (:statuses) "
             + "AND p.updatedAt < :threshold "
-            + "ORDER BY p.updatedAt ASC")
+            + "ORDER BY p.lastReconciledAt ASC NULLS FIRST")
     List<Payment> findReconciliationTargets(
             @Param("statuses") Collection<PaymentStatus> statuses,
             @Param("threshold") LocalDateTime threshold,
             Pageable pageable);
 
+    @Query("SELECT p FROM Payment p "
+            + "WHERE p.paymentStatus = :status "
+            + "AND p.createdAt < :threshold "
+            + "ORDER BY p.createdAt ASC")
+    List<Payment> findExpiredReadyPayments(
+            @Param("status") PaymentStatus status,
+            @Param("threshold") LocalDateTime threshold,
+            Pageable pageable);
+
     Page<Payment> findByPaymentStatusInOrderByUpdatedAtAsc(Collection<PaymentStatus> statuses, Pageable pageable);
+
+    long countByPaymentStatusInAndReconcileAttemptsGreaterThanEqual(
+            Collection<PaymentStatus> statuses, int reconcileAttempts);
 
     @EntityGraph(attributePaths = "order")
     @Query(value = "SELECT p FROM Payment p "

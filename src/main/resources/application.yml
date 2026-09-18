@@ -9,3 +9,9 @@ spring:
 reconciliation:
   batch-size: 100
   stale-threshold-minutes: 5
+
+reservation:
+  # 결제창을 열어두고 떠난 READY 결제를 종결해 선점을 되돌리는 기준.
+  # Toss 결제창 유효시간을 확인하지 않고 잡은 값이다. 인증 구간과 승인 구간의 합보다
+  # 여유 있어야 하고 스캔 주기(5분)만큼 오차가 더 붙는다.
+  ready-expiry-minutes: 30

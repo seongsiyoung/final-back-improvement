@@ -55,6 +55,8 @@ class RefundReconciliationServiceTest extends IntegrationTestSupport {
         refundReconciliationService.reconcile(active(target));
         verify(paymentGateWay).cancel(anyString(), anyInt(), anyString(), anyString());
         assertThat(status(target)).isEqualTo(RefundStatus.APPROVED);
+        assertThat(paymentRefundRepository.findByStoreOrderIdOrderByCreatedAtDesc(target.storeOrderId()).getFirst()
+                .getReconcileAttempts()).isZero();
     }
 
     @Test
@@ -69,6 +71,9 @@ class RefundReconciliationServiceTest extends IntegrationTestSupport {
 
         verify(paymentGateWay, never()).cancel(anyString(), anyInt(), anyString(), anyString());
         assertThat(status(target)).isEqualTo(RefundStatus.PG_PENDING);
+        PaymentRefund after = paymentRefundRepository.findById(refund.getId()).orElseThrow();
+        assertThat(after.getLastReconciledAt()).isNotNull();
+        assertThat(after.getReconcileAttempts()).isZero();
     }
 
     @Test

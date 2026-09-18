@@ -58,14 +58,16 @@ public class RefundScenarioSeeder {
     }
 
     private ConfirmScenario confirmScenario(String buyerEmail, int stock) {
-        Store store = loadTestDataSeeder.seedStoreWithProducts(1, stock);
+        Store store = loadTestDataSeeder.seedStoreWithProducts(
+                "confirm-scenario-" + System.nanoTime() + "@test.com", 1, stock);
         User buyer = loadTestDataSeeder.seedUserWithAddress(buyerEmail, "buyer1234!");
-        Product product = productRepository.findAll().stream()
-                .filter(candidate -> candidate.getStore().getId().equals(store.getId()))
-                .findFirst()
-                .orElseThrow();
+        Product product = productRepository.findByStoreAndDeletedAtIsNull(store, Pageable.unpaged())
+                .getContent().stream().findFirst().orElseThrow();
         if (stock == 0) {
             ReflectionTestUtils.setField(product, "stock", 0);
+            productRepository.save(product);
+        } else {
+            product.reserve(1);
             productRepository.save(product);
         }
         Order order = orderRepository.save(Order.builder()
@@ -283,6 +285,27 @@ public class RefundScenarioSeeder {
     }
 
     /** 장부 규칙 위반을 만든다. 결제는 REFUND_REQUESTED 인데 이미 전액 환불된 것으로 기록돼 있다. */
+    public void stuckRefundOn(RefundTarget target, RefundStatus status) {
+        Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
+        PaymentRefund refund = PaymentRefund.builder()
+                .payment(payment)
+                .storeOrder(storeOrderRepository.findById(target.storeOrderId()).orElseThrow())
+                .refundAmount(target.amount())
+                .refundReason(target.reason())
+                .refundStatus(RefundStatus.PG_PENDING)
+                .build();
+        if (status == RefundStatus.PG_APPROVED) {
+            refund.markPgApproved();
+        }
+        paymentRefundRepository.save(refund);
+    }
+
+    public void forcePartiallyRefundedPayment(Long orderId) {
+        Payment payment = paymentRepository.findByOrder_Id(orderId).orElseThrow();
+        jdbcTemplate.update("update payments set payment_status = ?, refunded_amount = ? where id = ?",
+                PaymentStatus.PARTIAL_REFUNDED.name(), payment.getAmount() / 2, payment.getId());
+    }
+
     public void forceFullyRefundedAmount(RefundTarget target) {
         Payment payment = paymentRepository.findByOrder_Id(target.orderId()).orElseThrow();
         jdbcTemplate.update("update payments set refunded_amount = ? where id = ?",

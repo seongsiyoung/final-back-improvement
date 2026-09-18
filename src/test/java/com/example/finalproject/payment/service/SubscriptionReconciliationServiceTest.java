@@ -2,13 +2,18 @@ package com.example.finalproject.payment.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.finalproject.payment.client.TossPaymentsClient;
 import com.example.finalproject.payment.domain.SubscriptionPayment;
 import com.example.finalproject.payment.dto.response.TossConfirmResponse;
 import com.example.finalproject.payment.enums.PaymentStatus;
+import com.example.finalproject.payment.service.pg.CancelResult;
+import com.example.finalproject.payment.service.pg.PaymentGateWay;
 import com.example.finalproject.payment.repository.SubscriptionPaymentRepository;
 import com.example.finalproject.subscription.domain.Subscription;
 import com.example.finalproject.subscription.enums.SubscriptionStatus;
@@ -24,6 +29,8 @@ import java.time.LocalDate;
 import java.util.Collections;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -44,6 +51,8 @@ class SubscriptionReconciliationServiceTest extends IntegrationTestSupport {
     private SubscriptionScenarioSeeder subscriptionScenarioSeeder;
     @MockBean
     private TossPaymentsClient tossPaymentsClient;
+    @MockBean
+    private PaymentGateWay paymentGateWay;
 
     @Test
     @DisplayName("Toss가 승인했으면 구독 결제를 승인으로 확정하고 구독도 되살린다")
@@ -104,15 +113,50 @@ class SubscriptionReconciliationServiceTest extends IntegrationTestSupport {
         assertThat(subscriptionOf(payment).getNextPaymentDate()).isEqualTo(beforeNextPaymentDate);
     }
 
-    @Test
-    @DisplayName("Toss 상태가 DONE이 아니면 실패로 확정한다")
-    void pending_whenNotDoneAtPg_marksFailed() {
+    @ParameterizedTest
+    @ValueSource(strings = {"ABORTED", "CANCELED", "EXPIRED"})
+    @DisplayName("Toss가 승인 실패를 확정하면 실패로 확정한다")
+    void pending_whenTerminalFailureAtPg_marksFailed(String status) {
         SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
-        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus("ABORTED"));
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus(status));
 
         subscriptionReconciliationService.reconcile(payment);
 
         assertThat(statusOf(payment)).isEqualTo(PaymentStatus.FAILED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"IN_PROGRESS", "WAITING_FOR_DEPOSIT", "NEW_STATUS"})
+    @DisplayName("Toss 상태가 종결되지 않았으면 실패로 확정하지 않고 다음 재조정을 기다린다")
+    void pending_whenStatusIsNotTerminalAtPg_keepsPending(String status) {
+        SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus(status));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment)).isEqualTo(PaymentStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("Toss 상태가 없으면 실패로 확정하지 않고 다음 재조정을 기다린다")
+    void pending_whenStatusIsMissingAtPg_keepsPending() {
+        SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus(null));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment)).isEqualTo(PaymentStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("Toss가 부분 취소 상태면 관리자 확인 대상으로 올린다")
+    void pending_whenPartiallyCanceledAtPg_marksReconciliationRequired() {
+        SubscriptionPayment payment = stuck(PaymentStatus.PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus("PARTIAL_CANCELED"));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment)).isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
     }
 
     @Test
@@ -142,13 +186,60 @@ class SubscriptionReconciliationServiceTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("REVERSAL_PENDING 인데 취소가 확인되지 않으면 그대로 둔다")
-    void reversalPending_whenNotCanceledAtPg_keepsState() {
+    @DisplayName("REVERSAL_PENDING 인데 PG 가 아직 DONE 이면 보상 취소를 재전송한다")
+    void reversalPending_whenStillDoneAtPg_resendsCancel() {
         SubscriptionPayment payment = stuck(PaymentStatus.REVERSAL_PENDING);
         when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(done());
+        when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
+                .thenReturn(new CancelResult(payment.getAmount()));
 
         subscriptionReconciliationService.reconcile(payment);
 
+        verify(paymentGateWay).cancel(anyString(), anyInt(), anyString(), anyString());
+        assertThat(statusOf(payment))
+                .as("조회만 하고 두면 다음 주기에도 같은 DONE 을 보게 되어 돈이 영영 묶인다")
+                .isEqualTo(PaymentStatus.FAILED);
+    }
+
+    @Test
+    @DisplayName("재전송 결과를 모르면 상태를 두고 다음 주기에 다시 시도한다")
+    void reversalPending_whenResendResultUnknown_keepsState() {
+        SubscriptionPayment payment = stuck(PaymentStatus.REVERSAL_PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(done());
+        when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("read timed out"));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment)).isEqualTo(PaymentStatus.REVERSAL_PENDING);
+    }
+
+    @Test
+    @DisplayName("PG 가 재전송을 명확히 거절하면 확인 필요로 올린다")
+    void reversalPending_whenResendRejected_marksReconciliationRequired() {
+        SubscriptionPayment payment = stuck(PaymentStatus.REVERSAL_PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(done());
+        when(paymentGateWay.cancel(anyString(), anyInt(), anyString(), anyString()))
+                .thenThrow(new FeignException.BadRequest("bad request", REQUEST,
+                        "{\"code\":\"NOT_CANCELABLE_PAYMENT\"}".getBytes(StandardCharsets.UTF_8),
+                        Collections.emptyMap()));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        assertThat(statusOf(payment))
+                .as("구독은 웹훅이 없어 이 스캔이 유일한 복구 수단이다. 막히면 사람에게 넘겨야 한다")
+                .isEqualTo(PaymentStatus.RECONCILIATION_REQUIRED);
+    }
+
+    @Test
+    @DisplayName("PG 상태가 아직 종결되지 않았으면 재전송하지 않는다")
+    void reversalPending_whenPgStatusNotTerminal_doesNotResend() {
+        SubscriptionPayment payment = stuck(PaymentStatus.REVERSAL_PENDING);
+        when(tossPaymentsClient.getPaymentByOrderId(anyString())).thenReturn(withStatus("IN_PROGRESS"));
+
+        subscriptionReconciliationService.reconcile(payment);
+
+        verify(paymentGateWay, never()).cancel(anyString(), anyInt(), anyString(), anyString());
         assertThat(statusOf(payment)).isEqualTo(PaymentStatus.REVERSAL_PENDING);
     }
 
