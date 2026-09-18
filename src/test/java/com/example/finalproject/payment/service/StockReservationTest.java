@@ -19,6 +19,7 @@ import com.example.finalproject.store.domain.Store;
 import com.example.finalproject.testsupport.IntegrationTestSupport;
 import com.example.finalproject.testsupport.LoadTestDataSeeder;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class StockReservationTest extends IntegrationTestSupport {
+
+    private static final int DEADLOCK_CART_SIZE = 12;
+    private static final int DEADLOCK_ROUNDS = 5;
 
     @Autowired private PaymentService paymentService;
     @Autowired private PaymentConfirmCommandService paymentConfirmCommandService;
@@ -137,29 +141,41 @@ class StockReservationTest extends IntegrationTestSupport {
         assertThat(availableOf(productId)).isZero();
     }
 
+    /**
+     * 상품이 둘뿐이면 두 요청이 "각자 하나씩 쥔" 순간에 겹쳐야 데드락이 나므로 그 창을 놓치기 쉽다.
+     * 실제로 상품 둘로는 잠금 순서를 모두 없애도 이 테스트가 통과했다. 장바구니를 열둘로 늘리고
+     * 여러 번 돌려, 정렬이 빠지면 실제로 데드락이 나게 만든다.
+     */
     @Test
     @DisplayName("장바구니 순서가 서로 반대인 두 요청이 동시에 와도 데드락이 나지 않는다")
     void concurrentPrepare_withReversedCartOrder_doesNotDeadlock() throws Exception {
-        Long low = seedProduct(10);
-        Long high = seedProduct(10);
-        Long smaller = Math.min(low, high);
-        Long larger = Math.max(low, high);
-        String first = newBuyer("order-a");
-        String second = newBuyer("order-b");
+        List<Long> ascending = new ArrayList<>();
+        for (int i = 0; i < DEADLOCK_CART_SIZE; i++) {
+            ascending.add(seedProduct(100));
+        }
+        ascending.sort(Long::compareTo);
+        List<Long> descending = new ArrayList<>(ascending);
+        Collections.reverse(descending);
 
-        List<Boolean> results = runConcurrently(List.of(
-                () -> tryPrepare(first, prepareRequest(orderedQuantities(smaller, larger))),
-                () -> tryPrepare(second, prepareRequest(orderedQuantities(larger, smaller)))));
+        for (int round = 0; round < DEADLOCK_ROUNDS; round++) {
+            String first = newBuyer("order-a-" + round);
+            String second = newBuyer("order-b-" + round);
 
-        assertThat(results).as("데드락이면 한쪽이 예외로 끝난다").containsExactly(true, true);
-        assertThat(reservedOf(smaller)).isEqualTo(2);
-        assertThat(reservedOf(larger)).isEqualTo(2);
+            List<Boolean> results = runConcurrently(List.of(
+                    () -> tryPrepare(first, prepareRequest(oneEach(ascending))),
+                    () -> tryPrepare(second, prepareRequest(oneEach(descending)))));
+
+            assertThat(results)
+                    .as("데드락이면 한쪽이 예외로 끝난다 (round %d)", round)
+                    .containsExactly(true, true);
+        }
+
+        assertThat(reservedOf(ascending.get(0))).isEqualTo(DEADLOCK_ROUNDS * 2);
     }
 
-    private Map<Long, Integer> orderedQuantities(Long firstProductId, Long secondProductId) {
+    private Map<Long, Integer> oneEach(List<Long> productIds) {
         Map<Long, Integer> quantities = new LinkedHashMap<>();
-        quantities.put(firstProductId, 1);
-        quantities.put(secondProductId, 1);
+        productIds.forEach(id -> quantities.put(id, 1));
         return quantities;
     }
 
